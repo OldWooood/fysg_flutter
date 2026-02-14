@@ -127,7 +127,7 @@ class _HomePageState extends ConsumerState<HomePage> {
                                      ),
                                    ),
                                    SizedBox(
-                                       height: 160,
+                                       height: 180,
                                        child: ListView.builder(
                                            scrollDirection: Axis.horizontal,
                                            padding: const EdgeInsets.symmetric(horizontal: 20),

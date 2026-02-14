@@ -38,6 +38,8 @@ class AppLocalizations {
       'no_results': 'No results found',
       'search_history': 'Search History',
       'clear_history': 'Clear History',
+      'download_started': 'Download started',
+      'already_downloaded': 'Already downloaded',
     },
     'zh': {
       'home': '首页',
@@ -66,6 +68,8 @@ class AppLocalizations {
       'no_results': '未找到相关结果',
       'search_history': '搜索历史',
       'clear_history': '清空记录',
+      'download_started': '开始下载',
+      'already_downloaded': '文件已存在',
     },
   };
 
@@ -95,6 +99,8 @@ class AppLocalizations {
   String get noResults => _localizedValues[locale.languageCode]!['no_results']!;
   String get searchHistory => _localizedValues[locale.languageCode]!['search_history']!;
   String get clearHistory => _localizedValues[locale.languageCode]!['clear_history']!;
+  String get downloadStarted => _localizedValues[locale.languageCode]!['download_started']!;
+  String get alreadyDownloaded => _localizedValues[locale.languageCode]!['already_downloaded']!;
 }
 
 class AppLocalizationsDelegate extends LocalizationsDelegate<AppLocalizations> {

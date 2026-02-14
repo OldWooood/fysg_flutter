@@ -69,6 +69,7 @@ class FysgPlayerState {
 class PlayerNotifier extends StateNotifier<FysgPlayerState> {
   final Ref _ref;
   final AudioPlayer _audioPlayer = AudioPlayer();
+  final ConcatenatingAudioSource _playlist = ConcatenatingAudioSource(children: []);
   final FysgService _service;
   final RecentlyPlayedService _recentService;
 
@@ -76,12 +77,27 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
     _init();
   }
 
-  void _init() {
+  Future<void> _init() async {
+    // Set the playlist as audio source to enable media controls
+    try {
+      await _audioPlayer.setAudioSource(_playlist);
+    } catch (e) {
+      print('Error initializing audio player: $e');
+    }
+
     _audioPlayer.playerStateStream.listen((playerState) {
-      state = state.copyWith(isPlaying: playerState.playing);
-      if (playerState.processingState == ProcessingState.completed) {
-          next(auto: true);
-      }
+      if (mounted) state = state.copyWith(isPlaying: playerState.playing);
+    });
+
+    _audioPlayer.currentIndexStream.listen((index) {
+        if (index != null && index < state.queue.length && mounted) {
+            final song = state.queue[index];
+            if (state.currentIndex != index) {
+                state = state.copyWith(currentIndex: index, currentSong: song);
+                _recentService.addSong(song);
+                _ref.invalidate(recentSongsProvider);
+            }
+        }
     });
 
     _audioPlayer.positionStream.listen((position) {
@@ -101,64 +117,18 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
 
   Future<void> playSong(Song song, {bool keepQueue = false, int retryCount = 0}) async {
     try {
-      // Check if downloaded
-      final downloadService = DownloadService();
-      final localFile = await downloadService.getLocalFile(song.id);
-      
-      Song fullSong = song;
-      if (!localFile.existsSync()) {
-          // Fetch full details if not downloaded (to get URL/Lyrics)
-          fullSong = await _service.getSongDetails(song.id);
-      }
-      
-      if (fullSong.url == null && !localFile.existsSync()) return;
-
-      await _recentService.addSong(fullSong);
-      _ref.invalidate(recentSongsProvider);
-
-      state = state.copyWith(currentSong: fullSong);
-
-      final headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-            'Referer': 'https://www.fysg.org/',
-            'Origin': 'https://www.fysg.org',
-            'Sec-Fetch-Dest': 'audio',
-            'Sec-Fetch-Mode': 'no-cors',
-            'Sec-Fetch-Site': 'cross-site',
-      };
-
-      AudioSource source;
-      if (localFile.existsSync()) {
-          source = AudioSource.file(
-            localFile.path,
-            tag: MediaItem(
-              id: fullSong.id.toString(),
-              album: fullSong.album ?? "FYSG",
-              title: fullSong.name,
-              artist: fullSong.artist,
-            ),
-          );
-      } else {
-          // Use LockCachingAudioSource to mitigate codec stalls and buffer underruns
-          source = LockCachingAudioSource(
-            Uri.parse(fullSong.url!),
-            headers: headers,
-            tag: MediaItem(
-              id: fullSong.id.toString(),
-              album: fullSong.album ?? "FYSG",
-              title: fullSong.name,
-              artist: fullSong.artist,
-            ),
-          );
+      // If we are playing from a queue and this song is in the queue, just seek to it
+      if (keepQueue && state.queue.isNotEmpty) {
+          final index = state.queue.indexWhere((s) => s.id == song.id);
+          if (index != -1) {
+              await _audioPlayer.seek(Duration.zero, index: index);
+              _audioPlayer.play();
+              return;
+          }
       }
 
-      await _audioPlayer.setAudioSource(source);
-      state = state.copyWith(isPlaying: true);
-      _audioPlayer.play();
-
-      if (fullSong.cover != null) {
-          _updateArtworkInBackground(fullSong);
-      }
+      // Single song or new queue
+      await logQueue([song], 0);
     } catch (e) {
       print("Error playing song (retry $retryCount): $e");
       if (retryCount < 2) {
@@ -168,17 +138,53 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
     }
   }
 
-  Future<void> downloadCurrentSong() async {
+  Future<AudioSource> _createAudioSource(Song song) async {
+      final downloadService = DownloadService();
+      final localFile = await downloadService.getLocalFile(song.id);
+      
+      final mediaItem = MediaItem(
+          id: song.id.toString(),
+          album: song.album ?? "FYSG",
+          title: song.name,
+          artist: song.artist,
+          artUri: song.cover != null ? Uri.parse(song.cover!) : null,
+      );
+
+      if (localFile.existsSync()) {
+          return AudioSource.file(localFile.path, tag: mediaItem);
+      }
+
+      final headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            'Referer': 'https://www.fysg.org/',
+      };
+      
+      return song.url != null 
+          ? AudioSource.uri(Uri.parse(song.url!), headers: headers, tag: mediaItem)
+          : AudioSource.uri(Uri.parse(""), tag: mediaItem);
+  }
+
+  Future<DownloadResult?> downloadCurrentSong() async {
       final song = state.currentSong;
-      if (song == null) return;
+      if (song == null) return null;
       
       try {
           final downloadService = DownloadService();
-          await downloadService.downloadSong(song);
-          // Force state update if needed, but for now just log
-          print('Downloaded ${song.name}');
+          if (await downloadService.isDownloaded(song.id)) {
+              return DownloadResult.alreadyDownloaded;
+          }
+          
+          // Start download in background
+          downloadService.downloadSong(song).then((_) {
+              print('Downloaded ${song.name}');
+          }).catchError((e) {
+              print('Download error: $e');
+          });
+          
+          return DownloadResult.started;
       } catch (e) {
           print('Download error: $e');
+          return null;
       }
   }
 
@@ -191,8 +197,18 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
   }
 
   Future<void> logQueue(List<Song> songs, int index) async {
-      state = state.copyWith(queue: songs, currentIndex: index);
-      playSong(songs[index], keepQueue: true);
+      final List<AudioSource> sources = [];
+      for (var song in songs) {
+          sources.add(await _createAudioSource(song));
+      }
+      
+      await _playlist.clear();
+      await _playlist.addAll(sources);
+      await _audioPlayer.setAudioSource(_playlist, initialIndex: index, preload: true);
+      
+      state = state.copyWith(queue: songs, currentIndex: index, currentSong: songs[index]);
+      await _audioPlayer.seek(Duration.zero, index: index);
+      _audioPlayer.play();
   }
 
   void togglePlayPause() {
@@ -210,51 +226,32 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
   void toggleMode() {
       final modes = PlaybackMode.values;
       final nextIndex = (state.mode.index + 1) % modes.length;
-      state = state.copyWith(mode: modes[nextIndex]);
+      final newMode = modes[nextIndex];
+      state = state.copyWith(mode: newMode);
+      
+      switch (newMode) {
+          case PlaybackMode.sequence:
+              _audioPlayer.setLoopMode(LoopMode.all);
+              _audioPlayer.setShuffleModeEnabled(false);
+              break;
+          case PlaybackMode.shuffle:
+              _audioPlayer.setLoopMode(LoopMode.all);
+              _audioPlayer.setShuffleModeEnabled(true);
+              break;
+          case PlaybackMode.single:
+              _audioPlayer.setLoopMode(LoopMode.one);
+              _audioPlayer.setShuffleModeEnabled(false);
+              break;
+      }
   }
 
   void next({bool auto = false}) {
-      if (state.queue.isEmpty) return;
-
-      int nextIndex = state.currentIndex;
-
-      if (state.mode == PlaybackMode.single && auto) {
-          // Loop single song
-          seek(Duration.zero);
-          _audioPlayer.play();
-          return;
-      } else if (state.mode == PlaybackMode.shuffle) {
-          // Random index
-          if (state.queue.length > 1) {
-              // Simple random for now, ideally we avoid recent history
-              nextIndex = (DateTime.now().millisecond) % state.queue.length;
-              if (nextIndex == state.currentIndex) nextIndex = (nextIndex + 1) % state.queue.length;
-          }
-      } else {
-          // Sequence (Loop List)
-          nextIndex = (state.currentIndex + 1) % state.queue.length;
-      }
-
-      state = state.copyWith(currentIndex: nextIndex);
-      playSong(state.queue[nextIndex], keepQueue: true);
+      _audioPlayer.seekToNext();
   }
-
+  
   void previous() {
-       if (state.queue.isEmpty) return;
-       
-       int prevIndex = state.currentIndex;
-       if (state.mode == PlaybackMode.shuffle) {
-           // For shuffle, prev usually goes to history, but for simplicity here strictly random 
-           // or just go back to strict previous in list? standard behavior varies.
-           // Let's just go to previous in list for now to allow navigating the list.
-           if (prevIndex > 0) prevIndex--;
-           else prevIndex = state.queue.length - 1;
-       } else {
-           if (prevIndex > 0) prevIndex--;
-           else prevIndex = state.queue.length - 1;
-       }
-       
-       state = state.copyWith(currentIndex: prevIndex);
-       playSong(state.queue[prevIndex], keepQueue: true);
+      _audioPlayer.seekToPrevious();
   }
 }
+
+enum DownloadResult { started, alreadyDownloaded }

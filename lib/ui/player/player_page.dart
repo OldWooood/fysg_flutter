@@ -3,7 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:scrollable_positioned_list/scrollable_positioned_list.dart'; 
+import 'dart:ui';
 import 'playlist_bottom_sheet.dart';
+import '../../utils/toast_utils.dart';
 import '../../providers/player_provider.dart';
 import '../../models/song.dart';
 import '../../api/image_cache_service.dart';
@@ -121,17 +123,31 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with SingleTickerProvid
       extendBodyBehindAppBar: true,
       body: Stack(
         children: [
-            // Background blur
+            // Background Blurred Cover
             Positioned.fill(
                 child: song.cover != null 
-                ? CachedNetworkImage(
-                    imageUrl: song.cover!, 
-                    httpHeaders: ImageCacheService.headers,
-                    fit: BoxFit.cover, 
-                    color: Colors.black.withOpacity(0.7), 
-                    colorBlendMode: BlendMode.darken
-                  )
-                : Container(color: Colors.black),
+                    ? AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 1000),
+                        child: Stack(
+                            key: ValueKey(song.cover),
+                            fit: StackFit.expand,
+                            children: [
+                                CachedNetworkImage(
+                                    imageUrl: song.cover!, 
+                                    httpHeaders: ImageCacheService.headers,
+                                    fit: BoxFit.cover,
+                                    memCacheHeight: 400,
+                                ),
+                                BackdropFilter(
+                                    filter: ImageFilter.blur(sigmaX: 100, sigmaY: 100),
+                                    child: Container(
+                                        color: Colors.black.withOpacity(0.5),
+                                    ),
+                                ),
+                            ],
+                        ),
+                      )
+                    : Container(color: Colors.black),
             ),
             
             Column(
@@ -349,7 +365,16 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with SingleTickerProvid
                            ),
                            IconButton(
                                icon: const Icon(Icons.download, color: Colors.white),
-                               onPressed: () => ref.read(playerProvider.notifier).downloadCurrentSong(),
+                               onPressed: () async {
+                                   final result = await ref.read(playerProvider.notifier).downloadCurrentSong();
+                                   if (result == null || !context.mounted) return;
+                                   
+                                   final message = result == DownloadResult.started 
+                                       ? AppLocalizations.of(context).downloadStarted
+                                       : AppLocalizations.of(context).alreadyDownloaded;
+                                       
+                                   ToastUtils.showToast(context, message);
+                               },
                            ),
                            IconButton(
                                icon: const Icon(Icons.playlist_play, color: Colors.white),
