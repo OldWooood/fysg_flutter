@@ -51,8 +51,15 @@ class Song {
         }
     }
 
+    int parsedId = 0;
+    if (json['songId'] != null && json['songId'] != 0) {
+        parsedId = json['songId'] is int ? json['songId'] : int.tryParse(json['songId'].toString()) ?? 0;
+    } else {
+        parsedId = json['id'] ?? json['audioId'] ?? int.tryParse(json['id']?.toString() ?? '0') ?? 0;
+    }
+
     return Song(
-      id: json['id'] is int ? json['id'] : int.tryParse(json['id'].toString()) ?? 0,
+      id: parsedId,
       name: json['name'] ?? 'Unknown Title',
       artist: artistName ?? 'Unknown Artist',
       album: albumName,

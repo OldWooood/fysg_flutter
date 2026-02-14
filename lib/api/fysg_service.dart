@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import '../models/song.dart';
 import '../models/playlist.dart';
@@ -14,22 +15,71 @@ class FysgService {
     'Origin': 'https://www.fysg.org',
   };
 
-  Future<List<Song>> searchSongs(String query, {int page = 0, int size = 20}) async {
-    final response = await http.get(
-        Uri.parse('$_apiBase/songs?name=$query&page=$page&size=$size&$_commonParams'),
-        headers: _headers,
-    );
+  Future<List<Map<String, dynamic>>> getSearchSuggestions(String query, {int size = 10}) async {
+    if (query.trim().isEmpty) return [];
     
-    if (response.statusCode == 200) {
-      final jsonResponse = json.decode(utf8.decode(response.bodyBytes));
-      
-      // Correct parsing based on browser agent findings: { code: 0, data: { count: ..., list: [...] } }
-      if (jsonResponse['code'] == 0 && jsonResponse['data'] != null) {
+    final queryParams = {
+      'name': query,
+      'size': size.toString(),
+      '_app': 'fuyinshige',
+      '_device': 'web',
+      '_version': '5.1.7',
+      '_deviceId': '',
+      '_cvr': '0',
+    };
+
+    final uri = Uri.https('www.fysg.org', '/api/app/songs-random-name', queryParams);
+
+    try {
+      final response = await http.get(uri, headers: _headers);
+
+      if (response.statusCode == 200) {
+        final jsonResponse = json.decode(utf8.decode(response.bodyBytes));
+        if (jsonResponse['code'] == 0 && jsonResponse['data'] != null) {
           final data = jsonResponse['data'];
-          if (data['list'] != null) {
-             return (data['list'] as List).map((item) => Song.fromJson(item, assetBase: _assetBase)).toList();
+          if (data is List) {
+            return data.map((item) => Map<String, dynamic>.from(item as Map)).toList();
+          } else if (data is Map && data['list'] != null) {
+            return (data['list'] as List).map((item) => Map<String, dynamic>.from(item as Map)).toList();
           }
+        }
       }
+    } catch (e) {
+      debugPrint('Error fetching suggestions: $e');
+    }
+    return [];
+  }
+
+  Future<List<Song>> searchSongs(String query, {int page = 0, int size = 20}) async {
+    final queryParams = {
+      'name': query,
+      'page': page.toString(),
+      'size': size.toString(),
+      '_app': 'fuyinshige',
+      '_device': 'web',
+      '_version': '5.1.7',
+      '_deviceId': '',
+      '_cvr': '0',
+    };
+
+    final uri = Uri.https('www.fysg.org', '/api/app/songs', queryParams);
+    
+    try {
+      final response = await http.get(uri, headers: _headers);
+      
+      if (response.statusCode == 200) {
+        final jsonResponse = json.decode(utf8.decode(response.bodyBytes));
+        if (jsonResponse['code'] == 0 && jsonResponse['data'] != null) {
+            final data = jsonResponse['data'];
+            if (data is Map && data['list'] != null) {
+               return (data['list'] as List).map((item) => Song.fromJson(item, assetBase: _assetBase)).toList();
+            } else if (data is List) {
+               return data.map((item) => Song.fromJson(item, assetBase: _assetBase)).toList();
+            }
+        }
+      }
+    } catch (e) {
+      debugPrint('Error searching songs: $e');
     }
     return [];
   }

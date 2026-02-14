@@ -5,6 +5,7 @@ import '../player/player_page.dart';
 import '../player/playlist_bottom_sheet.dart';
 import '../../providers/player_provider.dart';
 import '../../models/song.dart';
+import '../../api/image_cache_service.dart';
 
 class MiniPlayer extends ConsumerWidget {
   const MiniPlayer({Key? key}) : super(key: key);
@@ -26,7 +27,7 @@ class MiniPlayer extends ConsumerWidget {
         );
       },
       child: Container(
-        height: 70,
+        constraints: const BoxConstraints(minHeight: 80),
         decoration: BoxDecoration(
           color: Theme.of(context).scaffoldBackgroundColor,
           boxShadow: [
@@ -37,6 +38,7 @@ class MiniPlayer extends ConsumerWidget {
             ),
           ],
         ),
+        padding: const EdgeInsets.symmetric(vertical: 8),
         child: Row(
           children: [
             if (song.cover != null)
@@ -45,7 +47,8 @@ class MiniPlayer extends ConsumerWidget {
                 width: 70,
                 height: 70,
                 fit: BoxFit.cover,
-                errorWidget: (context, url, error) => Container(color: Colors.grey),
+                httpHeaders: ImageCacheService.headers,
+                errorWidget: (context, url, error) => Container(color: Colors.grey, width: 70, height: 70),
               ),
             const SizedBox(width: 12),
             Expanded(
