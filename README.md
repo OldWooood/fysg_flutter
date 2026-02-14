@@ -13,7 +13,7 @@
 *   **离线与缓存**：
     *   支持歌曲下载，可在无网络环境下播放。
     *   智能图片缓存，即便在网络波动时也能流畅显示封面。
-*   **分类浏览**：支持按歌单、专辑、诗歌本、作者等多种维度探索。
+*   **分类浏览**：支持按歌单、专辑探索。
 *   **长辈适配**：深度优化了大字体下的排版布局，确保文字不重叠、不溢出。
 *   **多语言支持**：原生支持中文与英文。
 
@@ -21,7 +21,7 @@
 
 *   **核心框架**: [Flutter](https://flutter.dev/)
 *   **状态管理**: [Flutter Riverpod](https://riverpod.dev/)
-*   **音频引擎**: [just_audio](https://pub.dev/packages/just_audio) & [audio_service](https://pub.dev/packages/audio_service)
+*   **音频引擎**: [just_audio](https://pub.dev/packages/just_audio)
 *   **网络请求**: [http](https://pub.dev/packages/http) & [dio](https://pub.dev/packages/dio) (用于下载)
 *   **图片处理**: [cached_network_image](https://pub.dev/packages/cached_network_image)
 *   **本地存储**: [shared_preferences](https://pub.dev/packages/shared_preferences) & [path_provider](https://pub.dev/packages/path_provider)

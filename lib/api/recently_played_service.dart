@@ -9,15 +9,15 @@ class RecentlyPlayedService {
   Future<void> addSong(Song song) async {
     final prefs = await SharedPreferences.getInstance();
     List<String> songsJson = prefs.getStringList(_key) ?? [];
-    
+
     // Remove if existing (to move to top)
     songsJson.removeWhere((item) {
-        try {
-            final Map<String, dynamic> map = json.decode(item);
-            return map['id'] == song.id;
-        } catch (e) {
-            return false;
-        }
+      try {
+        final map = json.decode(item) as Map<String, dynamic>;
+        return map['id'] == song.id;
+      } catch (e) {
+        return false;
+      }
     });
 
     // Add to top
@@ -34,13 +34,17 @@ class RecentlyPlayedService {
   Future<List<Song>> getRecentSongs() async {
     final prefs = await SharedPreferences.getInstance();
     final List<String> songsJson = prefs.getStringList(_key) ?? [];
-    
-    return songsJson.map((item) {
-        try {
-            return Song.fromManifest(json.decode(item));
-        } catch (e) {
+
+    return songsJson
+        .map((item) {
+          try {
+            final map = json.decode(item) as Map<String, dynamic>;
+            return Song.fromManifest(map);
+          } catch (e) {
             return null;
-        }
-    }).whereType<Song>().toList();
+          }
+        })
+        .whereType<Song>()
+        .toList();
   }
 }

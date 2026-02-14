@@ -1,15 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../api/recently_played_service.dart';
 import '../../api/download_service.dart';
 import '../../models/song.dart';
 import '../../providers/player_provider.dart';
 import '../common/mini_player.dart';
+import '../common/song_list_tile.dart';
 import '../../l10n/app_localizations.dart';
-import '../../api/image_cache_service.dart';
-import 'package:cached_network_image/cached_network_image.dart';
 
-final downloadedSongsProvider = FutureProvider.autoDispose<List<Song>>((ref) async {
+final downloadedSongsProvider = FutureProvider.autoDispose<List<Song>>((
+  ref,
+) async {
   return ref.read(downloadServiceProvider).getDownloadedSongs();
 });
 
@@ -20,7 +20,8 @@ class MinePage extends ConsumerStatefulWidget {
   ConsumerState<MinePage> createState() => _MinePageState();
 }
 
-class _MinePageState extends ConsumerState<MinePage> with SingleTickerProviderStateMixin {
+class _MinePageState extends ConsumerState<MinePage>
+    with SingleTickerProviderStateMixin {
   late TabController _tabController;
 
   @override
@@ -33,7 +34,13 @@ class _MinePageState extends ConsumerState<MinePage> with SingleTickerProviderSt
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(AppLocalizations.of(context).mine, style: const TextStyle(fontFamily: 'Playfair Display', fontWeight: FontWeight.bold)),
+        title: Text(
+          AppLocalizations.of(context).mine,
+          style: const TextStyle(
+            fontFamily: 'Playfair Display',
+            fontWeight: FontWeight.bold,
+          ),
+        ),
         bottom: TabBar(
           controller: _tabController,
           tabs: [
@@ -47,10 +54,7 @@ class _MinePageState extends ConsumerState<MinePage> with SingleTickerProviderSt
           Expanded(
             child: TabBarView(
               controller: _tabController,
-              children: [
-                _RecentList(),
-                _DownloadList(),
-              ],
+              children: [_RecentList(), _DownloadList()],
             ),
           ),
           const MiniPlayer(),
@@ -71,31 +75,16 @@ class _RecentList extends ConsumerWidget {
           return Center(child: Text(AppLocalizations.of(context).noHistory));
         }
         return ListView.builder(
+          addAutomaticKeepAlives: false,
           itemCount: songs.length,
           itemBuilder: (context, index) {
             final song = songs[index];
-            return ListTile(
-              leading: song.cover != null 
-                  ? CachedNetworkImage(
-                      imageUrl: song.cover!,
-                      httpHeaders: ImageCacheService.headers,
-                      width: 50,
-                      height: 50,
-                      fit: BoxFit.cover,
-                  )
-                  : const Icon(Icons.music_note),
-              title: Text(
-                song.name, 
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontWeight: FontWeight.bold)
-              ),
-              subtitle: Text(
-                song.artist ?? 'Unknown',
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis
-              ),
-              onTap: () => ref.read(playerProvider.notifier).logQueue(songs, index),
+            return SongListTile(
+              key: ValueKey(song.id),
+              song: song,
+              fallbackIcon: Icons.music_note,
+              onTap: () =>
+                  ref.read(playerProvider.notifier).logQueue(songs, index),
             );
           },
         );
@@ -110,45 +99,32 @@ class _DownloadList extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final downloadsAsync = ref.watch(downloadedSongsProvider);
-    
+
     return downloadsAsync.when(
       data: (songs) {
         if (songs.isEmpty) {
           return Center(child: Text(AppLocalizations.of(context).noDownloads));
         }
         return ListView.builder(
+          addAutomaticKeepAlives: false,
           itemCount: songs.length,
           itemBuilder: (context, index) {
             final song = songs[index];
-            return ListTile(
-              leading: song.cover != null 
-                  ? CachedNetworkImage(
-                      imageUrl: song.cover!,
-                      httpHeaders: ImageCacheService.headers,
-                      width: 50,
-                      height: 50,
-                      fit: BoxFit.cover,
-                  )
-                  : const Icon(Icons.file_download_done),
-              title: Text(
-                song.name, 
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontWeight: FontWeight.bold)
-              ),
-              subtitle: Text(
-                song.artist ?? 'Downloaded',
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis
-              ),
+            return SongListTile(
+              key: ValueKey(song.id),
+              song: song,
+              fallbackIcon: Icons.file_download_done,
               trailing: IconButton(
                 icon: const Icon(Icons.delete_outline),
                 onPressed: () async {
-                   await ref.read(downloadServiceProvider).deleteDownload(song.id);
-                   ref.invalidate(downloadedSongsProvider);
+                  await ref
+                      .read(downloadServiceProvider)
+                      .deleteDownload(song.id);
+                  ref.invalidate(downloadedSongsProvider);
                 },
               ),
-              onTap: () => ref.read(playerProvider.notifier).logQueue(songs, index),
+              onTap: () =>
+                  ref.read(playerProvider.notifier).logQueue(songs, index),
             );
           },
         );

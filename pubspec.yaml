@@ -40,8 +40,6 @@ dependencies:
   http: ^1.2.0
   flutter_riverpod: ^2.5.1
   just_audio: ^0.9.36
-  just_audio_background: ^0.0.1-beta.13
-  audio_service: ^0.18.12
   cached_network_image: ^3.4.1
   google_fonts: ^6.1.0
   palette_generator: ^0.3.3

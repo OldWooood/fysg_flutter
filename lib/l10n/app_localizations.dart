@@ -59,7 +59,7 @@ class AppLocalizations {
       'search_hint': '搜索歌曲、专辑、歌手...',
       'categories': '全部分类',
       'albums': '专辑',
-      'playlists': '精选歌单',
+      'playlists': '歌单',
       'authors': '歌手',
       'books': '诗歌本',
       'song_tab': '音乐',

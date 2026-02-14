@@ -1,5 +1,5 @@
 package com.fysg.flutter.fysg_flutter
 
-import com.ryanheise.audioservice.AudioServiceActivity
+import io.flutter.embedding.android.FlutterActivity
 
-class MainActivity : AudioServiceActivity()
+class MainActivity : FlutterActivity()

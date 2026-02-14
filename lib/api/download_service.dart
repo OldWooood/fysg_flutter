@@ -24,7 +24,7 @@ class DownloadService {
 
   Future<void> downloadSong(Song song, {Function(int, int)? onProgress}) async {
     if (song.url == null) return;
-    
+
     final file = await getLocalFile(song.id);
     if (!file.parent.existsSync()) {
       file.parent.createSync(recursive: true);
@@ -35,10 +35,11 @@ class DownloadService {
       file.path,
       onReceiveProgress: onProgress,
       options: Options(
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-            'Referer': 'https://www.fysg.org/',
-          }
+        headers: {
+          'User-Agent':
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+          'Referer': 'https://www.fysg.org/',
+        },
       ),
     );
 
@@ -49,62 +50,60 @@ class DownloadService {
   Future<void> _saveToManifest(Song song) async {
     final prefs = await SharedPreferences.getInstance();
     final List<String> downloaded = prefs.getStringList(_downloadKey) ?? [];
-    
-    // Check if already in list
-    bool exists = false;
-    for (var s in downloaded) {
-        final map = json.decode(s);
-        if (map['id'] == song.id) {
-            exists = true;
-            break;
-        }
-    }
+
+    final exists = downloaded.any((item) {
+      final map = json.decode(item) as Map<String, dynamic>;
+      return map['id'] == song.id;
+    });
 
     if (!exists) {
-        downloaded.add(json.encode(song.toJson()));
-        await prefs.setStringList(_downloadKey, downloaded);
+      downloaded.add(json.encode(song.toJson()));
+      await prefs.setStringList(_downloadKey, downloaded);
     }
   }
 
   Future<List<Song>> getDownloadedSongs() async {
     final prefs = await SharedPreferences.getInstance();
     final List<String> downloaded = prefs.getStringList(_downloadKey) ?? [];
-    
+
     List<Song> songs = [];
     List<String> validFiles = [];
 
     // Verify files still exist
-    for (var s in downloaded) {
-        final map = json.decode(s);
-        final song = Song.fromManifest(map);
-        final file = await getLocalFile(song.id);
-        if (file.existsSync()) {
-            songs.add(song);
-            validFiles.add(s);
-        }
+    for (final item in downloaded) {
+      final map = json.decode(item) as Map<String, dynamic>;
+      final song = Song.fromManifest(map);
+      final file = await getLocalFile(song.id);
+      if (file.existsSync()) {
+        songs.add(song);
+        validFiles.add(item);
+      }
     }
 
     if (validFiles.length != downloaded.length) {
-        await prefs.setStringList(_downloadKey, validFiles);
+      await prefs.setStringList(_downloadKey, validFiles);
     }
 
     return songs;
   }
 
   Future<bool> isDownloaded(int songId) async {
-      final file = await getLocalFile(songId);
-      return file.existsSync();
+    final file = await getLocalFile(songId);
+    return file.existsSync();
   }
 
   Future<void> deleteDownload(int songId) async {
-      final file = await getLocalFile(songId);
-      if (file.existsSync()) {
-          file.deleteSync();
-      }
-      
-      final prefs = await SharedPreferences.getInstance();
-      final List<String> downloaded = prefs.getStringList(_downloadKey) ?? [];
-      downloaded.removeWhere((s) => json.decode(s)['id'] == songId);
-      await prefs.setStringList(_downloadKey, downloaded);
+    final file = await getLocalFile(songId);
+    if (file.existsSync()) {
+      file.deleteSync();
+    }
+
+    final prefs = await SharedPreferences.getInstance();
+    final List<String> downloaded = prefs.getStringList(_downloadKey) ?? [];
+    downloaded.removeWhere((item) {
+      final map = json.decode(item) as Map<String, dynamic>;
+      return map['id'] == songId;
+    });
+    await prefs.setStringList(_downloadKey, downloaded);
   }
 }

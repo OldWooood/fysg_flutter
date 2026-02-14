@@ -1,26 +1,50 @@
-import 'dart:io';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:just_audio/just_audio.dart';
-import 'package:just_audio_background/just_audio_background.dart';
 import '../models/song.dart';
 import '../api/fysg_service.dart';
 import '../api/recently_played_service.dart';
-import '../api/image_cache_service.dart';
 import '../api/download_service.dart';
 
 final fysgServiceProvider = Provider((ref) => FysgService());
 
-final recentlyPlayedServiceProvider = Provider((ref) => RecentlyPlayedService());
+final recentlyPlayedServiceProvider = Provider(
+  (ref) => RecentlyPlayedService(),
+);
 
 final recentSongsProvider = FutureProvider<List<Song>>((ref) async {
   return ref.watch(recentlyPlayedServiceProvider).getRecentSongs();
 });
 
-final playerProvider = StateNotifierProvider<PlayerNotifier, FysgPlayerState>((ref) {
+final playerMiniStateProvider = Provider<({Song? currentSong, bool isPlaying})>(
+  (ref) {
+    return ref.watch(
+      playerProvider.select(
+        (state) => (currentSong: state.currentSong, isPlaying: state.isPlaying),
+      ),
+    );
+  },
+);
+
+final playerQueueStateProvider =
+    Provider<({List<Song> queue, int currentIndex, PlaybackMode mode})>((ref) {
+      return ref.watch(
+        playerProvider.select(
+          (state) => (
+            queue: state.queue,
+            currentIndex: state.currentIndex,
+            mode: state.mode,
+          ),
+        ),
+      );
+    });
+
+final playerProvider = StateNotifierProvider<PlayerNotifier, FysgPlayerState>((
+  ref,
+) {
   return PlayerNotifier(
-      ref,
-      ref.watch(fysgServiceProvider), 
-      ref.watch(recentlyPlayedServiceProvider)
+    ref,
+    ref.watch(fysgServiceProvider),
+    ref.watch(recentlyPlayedServiceProvider),
   );
 });
 
@@ -69,11 +93,18 @@ class FysgPlayerState {
 class PlayerNotifier extends StateNotifier<FysgPlayerState> {
   final Ref _ref;
   final AudioPlayer _audioPlayer = AudioPlayer();
-  final ConcatenatingAudioSource _playlist = ConcatenatingAudioSource(children: []);
+  final ConcatenatingAudioSource _playlist = ConcatenatingAudioSource(
+    children: [],
+  );
   final FysgService _service;
+  final DownloadService _downloadService = DownloadService();
   final RecentlyPlayedService _recentService;
+  final Map<int, Song> _songDetailsCache = {};
+  final Set<int> _songDetailsLoading = {};
+  int _queueBuildToken = 0;
 
-  PlayerNotifier(this._ref, this._service, this._recentService) : super(FysgPlayerState()) {
+  PlayerNotifier(this._ref, this._service, this._recentService)
+    : super(FysgPlayerState()) {
     _init();
   }
 
@@ -86,45 +117,56 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
     }
 
     _audioPlayer.playerStateStream.listen((playerState) {
-      if (mounted) state = state.copyWith(isPlaying: playerState.playing);
+      if (!mounted || state.isPlaying == playerState.playing) return;
+      state = state.copyWith(isPlaying: playerState.playing);
     });
 
     _audioPlayer.currentIndexStream.listen((index) {
-        if (index != null && index < state.queue.length && mounted) {
-            final song = state.queue[index];
-            if (state.currentIndex != index) {
-                state = state.copyWith(currentIndex: index, currentSong: song);
-                _recentService.addSong(song);
-                _ref.invalidate(recentSongsProvider);
-            }
+      if (index != null && index < state.queue.length && mounted) {
+        final song = state.queue[index];
+        if (state.currentIndex != index) {
+          state = state.copyWith(currentIndex: index, currentSong: song);
+          _recentService.addSong(song);
+          _ref.invalidate(recentSongsProvider);
         }
+      }
     });
 
     _audioPlayer.positionStream.listen((position) {
-      if (mounted) state = state.copyWith(position: position);
+      if (!mounted || state.position == position) return;
+      state = state.copyWith(position: position);
     });
 
     _audioPlayer.durationStream.listen((duration) {
-      if (mounted) state = state.copyWith(duration: duration ?? Duration.zero);
+      final nextDuration = duration ?? Duration.zero;
+      if (!mounted || state.duration == nextDuration) return;
+      state = state.copyWith(duration: nextDuration);
     });
 
-    _audioPlayer.playbackEventStream.listen((event) {
+    _audioPlayer.playbackEventStream.listen(
+      (event) {
         // Log playback events for debugging stalls
-    }, onError: (Object e, StackTrace st) {
+      },
+      onError: (Object e, StackTrace st) {
         print('Playback error: $e');
-    });
+      },
+    );
   }
 
-  Future<void> playSong(Song song, {bool keepQueue = false, int retryCount = 0}) async {
+  Future<void> playSong(
+    Song song, {
+    bool keepQueue = false,
+    int retryCount = 0,
+  }) async {
     try {
       // If we are playing from a queue and this song is in the queue, just seek to it
       if (keepQueue && state.queue.isNotEmpty) {
-          final index = state.queue.indexWhere((s) => s.id == song.id);
-          if (index != -1) {
-              await _audioPlayer.seek(Duration.zero, index: index);
-              _audioPlayer.play();
-              return;
-          }
+        final index = state.queue.indexWhere((s) => s.id == song.id);
+        if (index != -1) {
+          await _audioPlayer.seek(Duration.zero, index: index);
+          _audioPlayer.play();
+          return;
+        }
       }
 
       // Single song or new queue
@@ -132,83 +174,267 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
     } catch (e) {
       print("Error playing song (retry $retryCount): $e");
       if (retryCount < 2) {
-          await Future.delayed(const Duration(seconds: 1));
-          return playSong(song, keepQueue: keepQueue, retryCount: retryCount + 1);
+        await Future.delayed(const Duration(seconds: 1));
+        return playSong(song, keepQueue: keepQueue, retryCount: retryCount + 1);
       }
     }
   }
 
   Future<AudioSource> _createAudioSource(Song song) async {
-      final downloadService = DownloadService();
-      final localFile = await downloadService.getLocalFile(song.id);
-      
-      final mediaItem = MediaItem(
-          id: song.id.toString(),
-          album: song.album ?? "FYSG",
-          title: song.name,
-          artist: song.artist,
-          artUri: song.cover != null ? Uri.parse(song.cover!) : null,
-      );
+    final localFile = await _downloadService.getLocalFile(song.id);
 
-      if (localFile.existsSync()) {
-          return AudioSource.file(localFile.path, tag: mediaItem);
-      }
+    if (localFile.existsSync()) {
+      return AudioSource.file(localFile.path);
+    }
 
-      final headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-            'Referer': 'https://www.fysg.org/',
-      };
-      
-      return song.url != null 
-          ? AudioSource.uri(Uri.parse(song.url!), headers: headers, tag: mediaItem)
-          : AudioSource.uri(Uri.parse(""), tag: mediaItem);
+    final url = song.url;
+    if (url == null || url.isEmpty) {
+      throw Exception('Missing audio url for song ${song.id}');
+    }
+
+    final headers = {
+      'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+      'Referer': 'https://www.fysg.org/',
+    };
+
+    return AudioSource.uri(Uri.parse(url), headers: headers);
   }
 
   Future<DownloadResult?> downloadCurrentSong() async {
-      final song = state.currentSong;
-      if (song == null) return null;
-      
-      try {
-          final downloadService = DownloadService();
-          if (await downloadService.isDownloaded(song.id)) {
-              return DownloadResult.alreadyDownloaded;
-          }
-          
-          // Start download in background
-          downloadService.downloadSong(song).then((_) {
-              print('Downloaded ${song.name}');
-          }).catchError((e) {
-              print('Download error: $e');
-          });
-          
-          return DownloadResult.started;
-      } catch (e) {
-          print('Download error: $e');
-          return null;
-      }
-  }
+    final song = state.currentSong;
+    if (song == null) return null;
 
-  Future<void> _updateArtworkInBackground(Song song) async {
-       try {
-          await ImageCacheService().getCachedImagePath(song.cover!);
-       } catch (e) {
-           print("Error loading art: $e");
-       }
+    try {
+      if (await _downloadService.isDownloaded(song.id)) {
+        return DownloadResult.alreadyDownloaded;
+      }
+
+      // Start download in background
+      _downloadService
+          .downloadSong(song)
+          .then((_) {
+            print('Downloaded ${song.name}');
+          })
+          .catchError((e) {
+            print('Download error: $e');
+          });
+
+      return DownloadResult.started;
+    } catch (e) {
+      print('Download error: $e');
+      return null;
+    }
   }
 
   Future<void> logQueue(List<Song> songs, int index) async {
-      final List<AudioSource> sources = [];
-      for (var song in songs) {
-          sources.add(await _createAudioSource(song));
+    if (songs.isEmpty) return;
+    if (index < 0 || index >= songs.length) return;
+
+    final buildToken = ++_queueBuildToken;
+    final preferred = await _buildPlayableEntry(songs[index]);
+    var firstPlayable = preferred;
+    if (firstPlayable == null) {
+      for (final song in songs) {
+        firstPlayable = await _buildPlayableEntry(song);
+        if (firstPlayable != null) break;
       }
-      
-      await _playlist.clear();
-      await _playlist.addAll(sources);
-      await _audioPlayer.setAudioSource(_playlist, initialIndex: index, preload: true);
-      
-      state = state.copyWith(queue: songs, currentIndex: index, currentSong: songs[index]);
-      await _audioPlayer.seek(Duration.zero, index: index);
+    }
+
+    if (firstPlayable == null) {
+      print('No playable songs in queue');
+      return;
+    }
+
+    await _playlist.clear();
+    await _playlist.add(firstPlayable.source);
+    await _audioPlayer.setAudioSource(
+      _playlist,
+      initialIndex: 0,
+      preload: true,
+    );
+
+    state = state.copyWith(
+      queue: [firstPlayable.song],
+      currentIndex: 0,
+      currentSong: firstPlayable.song,
+    );
+    await _audioPlayer.seek(Duration.zero, index: 0);
+    _audioPlayer.play();
+
+    _expandQueueInBackground(
+      songs: songs,
+      currentSongId: firstPlayable.song.id,
+      buildToken: buildToken,
+    );
+  }
+
+  Future<void> _expandQueueInBackground({
+    required List<Song> songs,
+    required int currentSongId,
+    required int buildToken,
+  }) async {
+    final playableSongs = <Song>[];
+    final sources = <AudioSource>[];
+
+    for (final song in songs) {
+      final entry = await _buildPlayableEntry(song);
+      if (entry == null) continue;
+      playableSongs.add(entry.song);
+      sources.add(entry.source);
+    }
+
+    if (!mounted || buildToken != _queueBuildToken || playableSongs.isEmpty) {
+      return;
+    }
+
+    final currentIndex = playableSongs.indexWhere(
+      (song) => song.id == currentSongId,
+    );
+    if (currentIndex < 0) return;
+
+    final resumePosition = _audioPlayer.position;
+    final shouldResume = _audioPlayer.playing;
+
+    await _playlist.clear();
+    await _playlist.addAll(sources);
+    await _audioPlayer.setAudioSource(
+      _playlist,
+      initialIndex: currentIndex,
+      initialPosition: resumePosition,
+      preload: true,
+    );
+
+    if (!mounted || buildToken != _queueBuildToken) return;
+
+    state = state.copyWith(
+      queue: playableSongs,
+      currentIndex: currentIndex,
+      currentSong: playableSongs[currentIndex],
+    );
+
+    if (shouldResume) {
       _audioPlayer.play();
+    }
+  }
+
+  Future<({Song song, AudioSource source})?> _buildPlayableEntry(
+    Song song,
+  ) async {
+    Song resolvedSong = song;
+    try {
+      final source = await _createAudioSource(resolvedSong);
+      return (song: resolvedSong, source: source);
+    } catch (_) {
+      if (resolvedSong.id == 0) return null;
+      try {
+        final details = await _service.getSongDetails(resolvedSong.id);
+        _songDetailsCache[resolvedSong.id] = details;
+        resolvedSong = _mergeSong(resolvedSong, details);
+        final source = await _createAudioSource(resolvedSong);
+        return (song: resolvedSong, source: source);
+      } catch (e) {
+        print('Skip unplayable song ${song.id}: $e');
+        return null;
+      }
+    }
+  }
+
+  Future<void> ensureCurrentSongDetailsLoaded() async {
+    final song = state.currentSong;
+    if (song == null) return;
+    await ensureSongDetailsLoaded(song.id);
+  }
+
+  Future<void> ensureSongDetailsLoaded(int songId) async {
+    Song? baseSong;
+    if (state.currentSong?.id == songId) {
+      baseSong = state.currentSong;
+    } else {
+      for (final song in state.queue) {
+        if (song.id == songId) {
+          baseSong = song;
+          break;
+        }
+      }
+    }
+    if (baseSong == null) return;
+    if ((baseSong.lyrics?.isNotEmpty ?? false)) return;
+
+    final cached = _songDetailsCache[songId];
+    if (cached != null) {
+      _mergeSongDetailsIntoState(cached);
+      return;
+    }
+
+    if (_songDetailsLoading.contains(songId)) return;
+    _songDetailsLoading.add(songId);
+    try {
+      final details = await _service.getSongDetails(songId);
+      _songDetailsCache[songId] = details;
+      _mergeSongDetailsIntoState(details);
+    } catch (e) {
+      print('Failed to load song details for $songId: $e');
+    } finally {
+      _songDetailsLoading.remove(songId);
+    }
+  }
+
+  void _mergeSongDetailsIntoState(Song detailedSong) {
+    Song? mergedCurrentSong = state.currentSong;
+    var currentSongChanged = false;
+    if (mergedCurrentSong?.id == detailedSong.id) {
+      final merged = _mergeSong(mergedCurrentSong!, detailedSong);
+      if (!_isSameSong(mergedCurrentSong, merged)) {
+        mergedCurrentSong = merged;
+        currentSongChanged = true;
+      }
+    }
+
+    var queueChanged = false;
+    final mergedQueue = <Song>[];
+    for (final song in state.queue) {
+      if (song.id != detailedSong.id) {
+        mergedQueue.add(song);
+        continue;
+      }
+      final merged = _mergeSong(song, detailedSong);
+      mergedQueue.add(merged);
+      if (!_isSameSong(song, merged)) {
+        queueChanged = true;
+      }
+    }
+
+    if (!currentSongChanged && !queueChanged) return;
+    state = state.copyWith(
+      currentSong: mergedCurrentSong,
+      queue: queueChanged ? mergedQueue : state.queue,
+    );
+  }
+
+  Song _mergeSong(Song base, Song details) {
+    final detailsLyrics = details.lyrics;
+    return Song(
+      id: base.id,
+      name: details.name.isNotEmpty ? details.name : base.name,
+      artist: details.artist ?? base.artist,
+      album: details.album ?? base.album,
+      cover: details.cover ?? base.cover,
+      url: details.url ?? base.url,
+      lyrics: (detailsLyrics != null && detailsLyrics.isNotEmpty)
+          ? detailsLyrics
+          : base.lyrics,
+    );
+  }
+
+  bool _isSameSong(Song a, Song b) {
+    return a.id == b.id &&
+        a.name == b.name &&
+        a.artist == b.artist &&
+        a.album == b.album &&
+        a.cover == b.cover &&
+        a.url == b.url &&
+        a.lyrics == b.lyrics;
   }
 
   void togglePlayPause() {
@@ -224,33 +450,33 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
   }
 
   void toggleMode() {
-      final modes = PlaybackMode.values;
-      final nextIndex = (state.mode.index + 1) % modes.length;
-      final newMode = modes[nextIndex];
-      state = state.copyWith(mode: newMode);
-      
-      switch (newMode) {
-          case PlaybackMode.sequence:
-              _audioPlayer.setLoopMode(LoopMode.all);
-              _audioPlayer.setShuffleModeEnabled(false);
-              break;
-          case PlaybackMode.shuffle:
-              _audioPlayer.setLoopMode(LoopMode.all);
-              _audioPlayer.setShuffleModeEnabled(true);
-              break;
-          case PlaybackMode.single:
-              _audioPlayer.setLoopMode(LoopMode.one);
-              _audioPlayer.setShuffleModeEnabled(false);
-              break;
-      }
+    final modes = PlaybackMode.values;
+    final nextIndex = (state.mode.index + 1) % modes.length;
+    final newMode = modes[nextIndex];
+    state = state.copyWith(mode: newMode);
+
+    switch (newMode) {
+      case PlaybackMode.sequence:
+        _audioPlayer.setLoopMode(LoopMode.all);
+        _audioPlayer.setShuffleModeEnabled(false);
+        break;
+      case PlaybackMode.shuffle:
+        _audioPlayer.setLoopMode(LoopMode.all);
+        _audioPlayer.setShuffleModeEnabled(true);
+        break;
+      case PlaybackMode.single:
+        _audioPlayer.setLoopMode(LoopMode.one);
+        _audioPlayer.setShuffleModeEnabled(false);
+        break;
+    }
   }
 
   void next({bool auto = false}) {
-      _audioPlayer.seekToNext();
+    _audioPlayer.seekToNext();
   }
-  
+
   void previous() {
-      _audioPlayer.seekToPrevious();
+    _audioPlayer.seekToPrevious();
   }
 }
 
