@@ -326,6 +326,14 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     dynamic playerState,
     WidgetRef ref,
   ) {
+    final maxSeconds = playerState.duration.inSeconds > 0
+        ? playerState.duration.inSeconds.toDouble()
+        : 1.0;
+    final sliderValue = playerState.position.inSeconds.toDouble().clamp(
+      0.0,
+      maxSeconds,
+    );
+
     return Column(
       children: [
         // TabBar moved here
@@ -353,10 +361,9 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
             thumbColor: Colors.white,
           ),
           child: Slider(
-            value: playerState.position.inSeconds.toDouble(),
-            max: playerState.duration.inSeconds.toDouble() > 0
-                ? playerState.duration.inSeconds.toDouble()
-                : 1.0,
+            min: 0.0,
+            value: sliderValue,
+            max: maxSeconds,
             onChanged: (value) {
               ref
                   .read(playerProvider.notifier)

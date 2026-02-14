@@ -248,9 +248,9 @@ class _SearchResultsPageState extends ConsumerState<SearchResultsPage> {
                         key: ValueKey(song.id),
                         song: song,
                         onTap: () {
-                          final queue = _buildPlaybackQueue(_results, index);
-                          if (queue.isEmpty) return;
-                          ref.read(playerProvider.notifier).logQueue(queue, 0);
+                          ref
+                              .read(playerProvider.notifier)
+                              .logQueue(_results, index);
                         },
                       );
                     },
@@ -293,11 +293,5 @@ class _SearchResultsPageState extends ConsumerState<SearchResultsPage> {
 
   List<Song> _filterPlayable(List<Song> songs) {
     return songs.where(_isPotentiallyPlayable).toList();
-  }
-
-  List<Song> _buildPlaybackQueue(List<Song> songs, int tappedIndex) {
-    if (songs.isEmpty) return const [];
-    final safeIndex = tappedIndex.clamp(0, songs.length - 1);
-    return [...songs.sublist(safeIndex), ...songs.sublist(0, safeIndex)];
   }
 }

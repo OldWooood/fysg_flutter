@@ -102,6 +102,7 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
   final Map<int, Song> _songDetailsCache = {};
   final Set<int> _songDetailsLoading = {};
   int _queueBuildToken = 0;
+  bool _suppressIndexSync = false;
 
   PlayerNotifier(this._ref, this._service, this._recentService)
     : super(FysgPlayerState()) {
@@ -122,6 +123,7 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
     });
 
     _audioPlayer.currentIndexStream.listen((index) {
+      if (_suppressIndexSync) return;
       if (index != null && index < state.queue.length && mounted) {
         final song = state.queue[index];
         if (state.currentIndex != index) {
@@ -234,10 +236,16 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
     final buildToken = ++_queueBuildToken;
     final preferred = await _buildPlayableEntry(songs[index]);
     var firstPlayable = preferred;
+    var chosenOriginalIndex = index;
     if (firstPlayable == null) {
-      for (final song in songs) {
+      for (var offset = 0; offset < songs.length; offset++) {
+        final originalIndex = (index + offset) % songs.length;
+        final song = songs[originalIndex];
         firstPlayable = await _buildPlayableEntry(song);
-        if (firstPlayable != null) break;
+        if (firstPlayable != null) {
+          chosenOriginalIndex = originalIndex;
+          break;
+        }
       }
     }
 
@@ -245,6 +253,20 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
       print('No playable songs in queue');
       return;
     }
+
+    final displayQueue = List<Song>.from(songs);
+    final safeDisplayIndex =
+        (chosenOriginalIndex >= 0 && chosenOriginalIndex < displayQueue.length)
+        ? chosenOriginalIndex
+        : index;
+
+    // Show full list immediately; keep index stream from remapping to stale index 0.
+    state = state.copyWith(
+      queue: displayQueue,
+      currentIndex: safeDisplayIndex,
+      currentSong: displayQueue[safeDisplayIndex],
+    );
+    _suppressIndexSync = true;
 
     await _playlist.clear();
     await _playlist.add(firstPlayable.source);
@@ -254,24 +276,19 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
       preload: true,
     );
 
-    state = state.copyWith(
-      queue: [firstPlayable.song],
-      currentIndex: 0,
-      currentSong: firstPlayable.song,
-    );
     await _audioPlayer.seek(Duration.zero, index: 0);
     _audioPlayer.play();
 
     _expandQueueInBackground(
       songs: songs,
-      currentSongId: firstPlayable.song.id,
+      currentSongSnapshot: firstPlayable.song,
       buildToken: buildToken,
     );
   }
 
   Future<void> _expandQueueInBackground({
     required List<Song> songs,
-    required int currentSongId,
+    required Song currentSongSnapshot,
     required int buildToken,
   }) async {
     final playableSongs = <Song>[];
@@ -285,12 +302,20 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
     }
 
     if (!mounted || buildToken != _queueBuildToken || playableSongs.isEmpty) {
+      if (buildToken == _queueBuildToken) {
+        _suppressIndexSync = false;
+      }
       return;
     }
 
-    final currentIndex = playableSongs.indexWhere(
-      (song) => song.id == currentSongId,
+    var currentIndex = playableSongs.indexWhere(
+      (song) => _isSameSong(song, currentSongSnapshot),
     );
+    if (currentIndex < 0) {
+      currentIndex = playableSongs.indexWhere(
+        (song) => song.id == currentSongSnapshot.id,
+      );
+    }
     if (currentIndex < 0) return;
 
     final resumePosition = _audioPlayer.position;
@@ -312,6 +337,7 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
       currentIndex: currentIndex,
       currentSong: playableSongs[currentIndex],
     );
+    _suppressIndexSync = false;
 
     if (shouldResume) {
       _audioPlayer.play();
