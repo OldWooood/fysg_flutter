@@ -4,6 +4,7 @@ import '../models/song.dart';
 import '../api/fysg_service.dart';
 import '../api/recently_played_service.dart';
 import '../api/download_service.dart';
+import '../audio/app_audio_handler.dart';
 
 final fysgServiceProvider = Provider((ref) => FysgService());
 
@@ -103,6 +104,7 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
   final Set<int> _songDetailsLoading = {};
   int _queueBuildToken = 0;
   bool _suppressIndexSync = false;
+  ProcessingState _processingState = ProcessingState.idle;
 
   PlayerNotifier(this._ref, this._service, this._recentService)
     : super(FysgPlayerState()) {
@@ -118,6 +120,8 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
     }
 
     _audioPlayer.playerStateStream.listen((playerState) {
+      _processingState = playerState.processingState;
+      _syncBackgroundPlayback();
       if (!mounted || state.isPlaying == playerState.playing) return;
       state = state.copyWith(isPlaying: playerState.playing);
     });
@@ -128,6 +132,7 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
         final song = state.queue[index];
         if (state.currentIndex != index) {
           state = state.copyWith(currentIndex: index, currentSong: song);
+          _syncBackgroundNowPlaying(song);
           _recentService.addSong(song);
           _ref.invalidate(recentSongsProvider);
         }
@@ -137,12 +142,14 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
     _audioPlayer.positionStream.listen((position) {
       if (!mounted || state.position == position) return;
       state = state.copyWith(position: position);
+      _syncBackgroundPlayback();
     });
 
     _audioPlayer.durationStream.listen((duration) {
       final nextDuration = duration ?? Duration.zero;
       if (!mounted || state.duration == nextDuration) return;
       state = state.copyWith(duration: nextDuration);
+      _syncBackgroundPlayback();
     });
 
     _audioPlayer.playbackEventStream.listen(
@@ -266,6 +273,7 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
       currentIndex: safeDisplayIndex,
       currentSong: displayQueue[safeDisplayIndex],
     );
+    _syncBackgroundNowPlaying(displayQueue[safeDisplayIndex]);
     _suppressIndexSync = true;
 
     await _playlist.clear();
@@ -337,6 +345,7 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
       currentIndex: currentIndex,
       currentSong: playableSongs[currentIndex],
     );
+    _syncBackgroundNowPlaying(playableSongs[currentIndex]);
     _suppressIndexSync = false;
 
     if (shouldResume) {
@@ -435,6 +444,26 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
     state = state.copyWith(
       currentSong: mergedCurrentSong,
       queue: queueChanged ? mergedQueue : state.queue,
+    );
+    _syncBackgroundNowPlaying(state.currentSong);
+  }
+
+  void _syncBackgroundNowPlaying(Song? song) {
+    final handler = AppAudioService.handler;
+    if (handler == null) return;
+    handler.setNowPlaying(song);
+    _syncBackgroundPlayback();
+  }
+
+  void _syncBackgroundPlayback() {
+    final handler = AppAudioService.handler;
+    if (handler == null) return;
+    handler.setPlayback(
+      isPlaying: _audioPlayer.playing,
+      position: _audioPlayer.position,
+      bufferedPosition: _audioPlayer.bufferedPosition,
+      speed: _audioPlayer.speed,
+      processingState: _processingState,
     );
   }
 

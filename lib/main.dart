@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
+import 'audio/app_audio_handler.dart';
 import 'l10n/app_localizations.dart';
 import 'ui/theme/app_theme.dart';
 import 'ui/main_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await AppAudioService.init();
 
   runApp(const ProviderScope(child: MyApp()));
 }

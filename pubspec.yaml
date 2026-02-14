@@ -39,6 +39,7 @@ dependencies:
   intl: ^0.20.2
   http: ^1.2.0
   flutter_riverpod: ^2.6.1
+  audio_service: ^0.18.18
   just_audio: ^0.10.5
   cached_network_image: ^3.4.1
   google_fonts: ^8.0.1
