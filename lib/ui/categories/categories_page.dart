@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
 import '../../models/playlist.dart';
 import '../../providers/player_provider.dart';
 import '../../api/image_cache_service.dart';
@@ -153,15 +154,12 @@ class _CategoryGridState extends ConsumerState<_CategoryGrid> {
   Widget build(BuildContext context) {
     if (_isLoading) return const Center(child: CircularProgressIndicator());
     
-    return GridView.builder(
+    return MasonryGridView.count(
       controller: _scrollController,
       padding: const EdgeInsets.all(16),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 2,
-        childAspectRatio: 0.75,
-        crossAxisSpacing: 16,
-        mainAxisSpacing: 16,
-      ),
+      crossAxisCount: 2,
+      mainAxisSpacing: 16,
+      crossAxisSpacing: 16,
       itemCount: _items.length + (_isLoadingMore ? 2 : 0),
       itemBuilder: (context, index) {
         if (index >= _items.length) {
@@ -172,33 +170,49 @@ class _CategoryGridState extends ConsumerState<_CategoryGrid> {
           onTap: () {
              Navigator.push(context, MaterialPageRoute(builder: (_) => PlaylistDetailPage(playlist: item)));
           },
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: Container(
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(8),
-                    color: Colors.grey[200],
-                    image: item.cover != null ? DecorationImage(
-                        image: CachedNetworkImageProvider(
-                            item.cover!, 
-                            headers: ImageCacheService.headers
-                        ),
-                        fit: BoxFit.cover,
-                    ) : null,
-                  ),
-                  child: item.cover == null ? const Center(child: Icon(Icons.music_note, size: 40, color: Colors.grey)) : null,
+          child: Container(
+            decoration: BoxDecoration(
+              color: Theme.of(context).cardColor,
+              borderRadius: BorderRadius.circular(12),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.05),
+                  blurRadius: 10,
+                  offset: const Offset(0, 4),
                 ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                item.name,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontWeight: FontWeight.bold),
-              ),
-            ],
+              ],
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                AspectRatio(
+                  aspectRatio: 1,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Colors.grey[200],
+                      image: item.cover != null ? DecorationImage(
+                          image: CachedNetworkImageProvider(
+                              item.cover!, 
+                              headers: ImageCacheService.headers
+                          ),
+                          fit: BoxFit.cover,
+                      ) : null,
+                    ),
+                    child: item.cover == null ? const Center(child: Icon(Icons.music_note, size: 40, color: Colors.grey)) : null,
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.all(12.0),
+                  child: Text(
+                    item.name,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                  ),
+                ),
+              ],
+            ),
           ),
         );
       },

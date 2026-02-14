@@ -159,45 +159,66 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with SingleTickerProvid
   }
 
   Widget _buildCoverView(BuildContext context, Song song) {
-      return Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-               SizedBox(height: kToolbarHeight + 40), // Spacing for AppBar
-               Container(
-                  height: 300,
-                  width: 300,
-                  decoration: BoxDecoration(
-                     borderRadius: BorderRadius.circular(12),
-                     boxShadow: [BoxShadow(color: Colors.black45, blurRadius: 20, offset: Offset(0, 10))],
-                  ),
-                  child: ClipRRect(
-                      borderRadius: BorderRadius.circular(12),
-                      child: song.cover != null 
-                           ? CachedNetworkImage(
-                               imageUrl: song.cover!, 
-                               httpHeaders: ImageCacheService.headers,
-                               fit: BoxFit.cover
-                             )
-                           : Container(color: Colors.grey),
-                  ),
-               ),
-               const SizedBox(height: 40),
-               Text(
-                 song.name,
-                 style: Theme.of(context).textTheme.displayMedium?.copyWith(color: Colors.white, fontSize: 32),
-                 textAlign: TextAlign.center,
-                 maxLines: 2,
-                 overflow: TextOverflow.ellipsis,
-               ),
-               const SizedBox(height: 10),
-               Text(
-                 song.artist ?? "Unknown Artist",
-                  style: Theme.of(context).textTheme.bodyLarge?.copyWith(color: Colors.white70),
-                  textAlign: TextAlign.center,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-               ),
-          ],
+      return LayoutBuilder(
+        builder: (context, constraints) {
+          final screenHeight = MediaQuery.of(context).size.height;
+          // Dynamically adjust image size based on screen height
+          final imageSize = screenHeight < 700 ? 220.0 : 300.0;
+          final topSpacing = screenHeight < 700 ? kToolbarHeight + 10 : kToolbarHeight + 40;
+          final middleSpacing = screenHeight < 700 ? 20.0 : 40.0;
+
+          return SingleChildScrollView(
+            child: ConstrainedBox(
+              constraints: BoxConstraints(minHeight: constraints.maxHeight),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                       SizedBox(height: topSpacing), 
+                       Container(
+                          height: imageSize,
+                          width: imageSize,
+                          decoration: BoxDecoration(
+                             borderRadius: BorderRadius.circular(12),
+                             boxShadow: const [BoxShadow(color: Colors.black45, blurRadius: 20, offset: Offset(0, 10))],
+                          ),
+                          child: ClipRRect(
+                              borderRadius: BorderRadius.circular(12),
+                              child: song.cover != null 
+                                   ? CachedNetworkImage(
+                                       imageUrl: song.cover!, 
+                                       httpHeaders: ImageCacheService.headers,
+                                       fit: BoxFit.cover
+                                     )
+                                   : Container(color: Colors.grey),
+                          ),
+                       ),
+                       SizedBox(height: middleSpacing),
+                       Text(
+                         song.name,
+                         style: Theme.of(context).textTheme.displayMedium?.copyWith(
+                           color: Colors.white, 
+                           fontSize: screenHeight < 700 ? 24 : 32
+                         ),
+                         textAlign: TextAlign.center,
+                         maxLines: 2,
+                         overflow: TextOverflow.ellipsis,
+                       ),
+                       const SizedBox(height: 10),
+                       Text(
+                         song.artist ?? "Unknown Artist",
+                          style: Theme.of(context).textTheme.bodyLarge?.copyWith(color: Colors.white70),
+                          textAlign: TextAlign.center,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                       ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        }
       );
   }
 
