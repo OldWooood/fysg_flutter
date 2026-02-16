@@ -1,5 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:just_audio/just_audio.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:convert';
 import '../models/song.dart';
 import '../api/fysg_service.dart';
 import '../api/recently_played_service.dart';
@@ -93,6 +95,10 @@ class FysgPlayerState {
 
 class PlayerNotifier extends StateNotifier<FysgPlayerState> {
   static const int _maxSongLoadRetries = 2;
+  static const String _queueCacheKey = 'player_queue_cache';
+  static const String _queueIndexKey = 'player_queue_index';
+  static const String _queueSongIdKey = 'player_queue_song_id';
+  static const String _queuePositionKey = 'player_queue_position_ms';
   final Ref _ref;
   final AudioPlayer _audioPlayer = AudioPlayer();
   final ConcatenatingAudioSource _playlist = ConcatenatingAudioSource(
@@ -111,6 +117,7 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
   bool _isPrefetching = false;
   bool _prefetchCacheLoaded = false;
   Set<int> _prefetchCachedIds = {};
+  bool _queueStateRestored = false;
 
   PlayerNotifier(this._ref, this._service, this._recentService)
     : super(FysgPlayerState()) {
@@ -143,6 +150,7 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
         final song = state.queue[index];
         if (state.currentIndex != index) {
           state = state.copyWith(currentIndex: index, currentSong: song);
+          _persistQueueState();
           _syncBackgroundNowPlaying(song);
           _recentService.addSong(song);
           _ref.invalidate(recentSongsProvider);
@@ -173,6 +181,8 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
         _handleSongLoadFailure('playback_event_error');
       },
     );
+
+    await _restoreQueueState();
   }
 
   Future<void> playSong(
@@ -395,6 +405,7 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
       currentIndex: safeDisplayIndex,
       currentSong: displayQueue[safeDisplayIndex],
     );
+    _persistQueueState();
     _syncBackgroundNowPlaying(displayQueue[safeDisplayIndex]);
     _suppressIndexSync = true;
 
@@ -414,6 +425,77 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
       currentSongSnapshot: firstPlayable.song,
       buildToken: buildToken,
     );
+  }
+
+  Future<void> restoreCachedQueue() async {
+    await _restoreQueueState();
+  }
+
+  Future<void> _restoreQueueState() async {
+    if (_queueStateRestored) return;
+    _queueStateRestored = true;
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getStringList(_queueCacheKey);
+    if (raw == null || raw.isEmpty) return;
+
+    final cachedSongs = <Song>[];
+    for (final item in raw) {
+      try {
+        final map = json.decode(item) as Map<String, dynamic>;
+        cachedSongs.add(Song.fromManifest(map));
+      } catch (_) {
+        // skip bad entries
+      }
+    }
+    if (cachedSongs.isEmpty) return;
+
+    final savedIndex = prefs.getInt(_queueIndexKey) ?? 0;
+    final savedId = prefs.getInt(_queueSongIdKey);
+    final savedPositionMs = prefs.getInt(_queuePositionKey) ?? 0;
+    var index = savedIndex.clamp(0, cachedSongs.length - 1);
+    if (savedId != null) {
+      final byId = cachedSongs.indexWhere((s) => s.id == savedId);
+      if (byId != -1) {
+        index = byId;
+      }
+    }
+
+    state = state.copyWith(
+      queue: cachedSongs,
+      currentIndex: index,
+      currentSong: cachedSongs[index],
+      isPlaying: false,
+      position: Duration(milliseconds: savedPositionMs),
+      duration: Duration.zero,
+    );
+    _syncBackgroundNowPlaying(cachedSongs[index]);
+
+    _suppressIndexSync = true;
+    final buildToken = ++_queueBuildToken;
+    _expandQueueInBackground(
+      songs: cachedSongs,
+      currentSongSnapshot: cachedSongs[index],
+      buildToken: buildToken,
+    );
+
+    if (savedPositionMs > 0) {
+      _audioPlayer.seek(Duration(milliseconds: savedPositionMs));
+    }
+  }
+
+  Future<void> _persistQueueState({bool includePosition = false}) async {
+    final queue = state.queue;
+    if (queue.isEmpty || state.currentIndex < 0) return;
+    final prefs = await SharedPreferences.getInstance();
+    final encoded = queue.map((s) => json.encode(s.toJson())).toList();
+    await prefs.setStringList(_queueCacheKey, encoded);
+    await prefs.setInt(_queueIndexKey, state.currentIndex);
+    if (includePosition) {
+      await prefs.setInt(_queuePositionKey, state.position.inMilliseconds);
+    }
+    if (state.currentSong != null) {
+      await prefs.setInt(_queueSongIdKey, state.currentSong!.id);
+    }
   }
 
   Future<void> _expandQueueInBackground({
@@ -620,6 +702,12 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
     } else {
       _audioPlayer.play();
     }
+  }
+
+  void stopPlayback() {
+    _audioPlayer.stop();
+    state = state.copyWith(isPlaying: false);
+    _persistQueueState(includePosition: true);
   }
 
   void seek(Duration position) {

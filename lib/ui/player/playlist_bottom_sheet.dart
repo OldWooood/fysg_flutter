@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 import '../../providers/player_provider.dart';
+import '../../l10n/app_localizations.dart';
 
 class PlaylistBottomSheet extends ConsumerStatefulWidget {
   const PlaylistBottomSheet({super.key});
@@ -53,7 +54,7 @@ class _PlaylistBottomSheetState extends ConsumerState<PlaylistBottomSheet> {
                     ref.read(playerProvider.notifier).toggleMode();
                   },
                   icon: Icon(_getModeIcon(playerState.mode)),
-                  label: Text(_getModeLabel(playerState.mode)),
+                  label: Text(_getModeLabel(playerState.mode, context)),
                 ),
 
                 // Close
@@ -69,7 +70,7 @@ class _PlaylistBottomSheetState extends ConsumerState<PlaylistBottomSheet> {
           // List
           Expanded(
             child: queue.isEmpty
-                ? const Center(child: Text("Queue is empty"))
+                ? Center(child: Text(AppLocalizations.of(context).noResults))
                 : ScrollablePositionedList.builder(
                     itemScrollController: _itemScrollController,
                     itemPositionsListener: _itemPositionsListener,
@@ -131,14 +132,15 @@ class _PlaylistBottomSheetState extends ConsumerState<PlaylistBottomSheet> {
     }
   }
 
-  String _getModeLabel(PlaybackMode mode) {
+  String _getModeLabel(PlaybackMode mode, BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     switch (mode) {
       case PlaybackMode.sequence:
-        return "Order";
+        return l10n.loopOrder;
       case PlaybackMode.shuffle:
-        return "Shuffle";
+        return l10n.loopShuffle;
       case PlaybackMode.single:
-        return "Loop One";
+        return l10n.loopSingle;
     }
   }
 }

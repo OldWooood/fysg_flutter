@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../providers/player_provider.dart';
 import 'home/home_page.dart';
 import 'categories/categories_page.dart';
 import 'search/search_page.dart';
@@ -22,6 +23,14 @@ class _MainScreenState extends ConsumerState<MainScreen> {
     SearchPage(),
     MinePage(),
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      ref.read(playerProvider.notifier).restoreCachedQueue();
+    });
+  }
 
   @override
   Widget build(BuildContext context) {

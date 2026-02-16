@@ -40,6 +40,12 @@ class AppLocalizations {
       'clear_history': 'Clear History',
       'download_started': 'Download started',
       'already_downloaded': 'Already downloaded',
+      'loop': 'Loop',
+      'download': 'Download',
+      'playlist': 'Playlist',
+      'loop_order': 'Order',
+      'loop_shuffle': 'Shuffle',
+      'loop_single': 'Loop One',
     },
     'zh': {
       'home': '首页',
@@ -70,6 +76,12 @@ class AppLocalizations {
       'clear_history': '清空记录',
       'download_started': '开始下载',
       'already_downloaded': '文件已存在',
+      'loop': '循环',
+      'download': '下载',
+      'playlist': '列表',
+      'loop_order': '顺序',
+      'loop_shuffle': '随机',
+      'loop_single': '单曲',
     },
   };
 
@@ -78,29 +90,48 @@ class AppLocalizations {
   String get search => _localizedValues[locale.languageCode]!['search']!;
   String get mine => _localizedValues[locale.languageCode]!['mine']!;
   String get appTitle => _localizedValues[locale.languageCode]!['app_title']!;
-  String get recommended => _localizedValues[locale.languageCode]!['recommended']!;
-  String get recentlyPlayed => _localizedValues[locale.languageCode]!['recently_played']!;
+  String get recommended =>
+      _localizedValues[locale.languageCode]!['recommended']!;
+  String get recentlyPlayed =>
+      _localizedValues[locale.languageCode]!['recently_played']!;
   String get seeAll => _localizedValues[locale.languageCode]!['see_all']!;
   String get history => _localizedValues[locale.languageCode]!['history']!;
-  String get downloaded => _localizedValues[locale.languageCode]!['downloaded']!;
+  String get downloaded =>
+      _localizedValues[locale.languageCode]!['downloaded']!;
   String get playAll => _localizedValues[locale.languageCode]!['play_all']!;
   String get noHistory => _localizedValues[locale.languageCode]!['no_history']!;
-  String get noDownloads => _localizedValues[locale.languageCode]!['no_downloads']!;
+  String get noDownloads =>
+      _localizedValues[locale.languageCode]!['no_downloads']!;
   String get noLyrics => _localizedValues[locale.languageCode]!['no_lyrics']!;
-  String get searchHint => _localizedValues[locale.languageCode]!['search_hint']!;
-  String get categories => _localizedValues[locale.languageCode]!['categories']!;
+  String get searchHint =>
+      _localizedValues[locale.languageCode]!['search_hint']!;
+  String get categories =>
+      _localizedValues[locale.languageCode]!['categories']!;
   String get albums => _localizedValues[locale.languageCode]!['albums']!;
   String get playlists => _localizedValues[locale.languageCode]!['playlists']!;
   String get authors => _localizedValues[locale.languageCode]!['authors']!;
   String get books => _localizedValues[locale.languageCode]!['books']!;
   String get songTab => _localizedValues[locale.languageCode]!['song_tab']!;
   String get lyricsTab => _localizedValues[locale.languageCode]!['lyrics_tab']!;
-  String get searchAction => _localizedValues[locale.languageCode]!['search_action']!;
+  String get searchAction =>
+      _localizedValues[locale.languageCode]!['search_action']!;
   String get noResults => _localizedValues[locale.languageCode]!['no_results']!;
-  String get searchHistory => _localizedValues[locale.languageCode]!['search_history']!;
-  String get clearHistory => _localizedValues[locale.languageCode]!['clear_history']!;
-  String get downloadStarted => _localizedValues[locale.languageCode]!['download_started']!;
-  String get alreadyDownloaded => _localizedValues[locale.languageCode]!['already_downloaded']!;
+  String get searchHistory =>
+      _localizedValues[locale.languageCode]!['search_history']!;
+  String get clearHistory =>
+      _localizedValues[locale.languageCode]!['clear_history']!;
+  String get downloadStarted =>
+      _localizedValues[locale.languageCode]!['download_started']!;
+  String get alreadyDownloaded =>
+      _localizedValues[locale.languageCode]!['already_downloaded']!;
+  String get loop => _localizedValues[locale.languageCode]!['loop']!;
+  String get download => _localizedValues[locale.languageCode]!['download']!;
+  String get playlist => _localizedValues[locale.languageCode]!['playlist']!;
+  String get loopOrder => _localizedValues[locale.languageCode]!['loop_order']!;
+  String get loopShuffle =>
+      _localizedValues[locale.languageCode]!['loop_shuffle']!;
+  String get loopSingle =>
+      _localizedValues[locale.languageCode]!['loop_single']!;
 }
 
 class AppLocalizationsDelegate extends LocalizationsDelegate<AppLocalizations> {
@@ -110,7 +141,8 @@ class AppLocalizationsDelegate extends LocalizationsDelegate<AppLocalizations> {
   bool isSupported(Locale locale) => ['en', 'zh'].contains(locale.languageCode);
 
   @override
-  Future<AppLocalizations> load(Locale locale) => SynchronousFuture<AppLocalizations>(AppLocalizations(locale));
+  Future<AppLocalizations> load(Locale locale) =>
+      SynchronousFuture<AppLocalizations>(AppLocalizations(locale));
 
   @override
   bool shouldReload(AppLocalizationsDelegate old) => false;

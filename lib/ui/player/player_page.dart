@@ -451,12 +451,16 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              IconButton(
-                icon: Icon(_getModeIcon(playerState.mode), color: Colors.white),
+              _buildOptionButton(
+                context,
+                icon: _getModeIcon(playerState.mode),
+                label: _getModeLabel(playerState.mode, context),
                 onPressed: () => ref.read(playerProvider.notifier).toggleMode(),
               ),
-              IconButton(
-                icon: const Icon(Icons.download, color: Colors.white),
+              _buildOptionButton(
+                context,
+                icon: Icons.download,
+                label: AppLocalizations.of(context).download,
                 onPressed: () async {
                   final result = await ref
                       .read(playerProvider.notifier)
@@ -470,8 +474,10 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
                   ToastUtils.showToast(context, message);
                 },
               ),
-              IconButton(
-                icon: const Icon(Icons.playlist_play, color: Colors.white),
+              _buildOptionButton(
+                context,
+                icon: Icons.playlist_play,
+                label: AppLocalizations.of(context).playlist,
                 onPressed: () {
                   showModalBottomSheet(
                     context: context,
@@ -497,6 +503,41 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
       case PlaybackMode.single:
         return Icons.repeat_one;
     }
+  }
+
+  String _getModeLabel(PlaybackMode mode, BuildContext context) {
+    final l10n = AppLocalizations.of(context);
+    switch (mode) {
+      case PlaybackMode.sequence:
+        return l10n.loopOrder;
+      case PlaybackMode.shuffle:
+        return l10n.loopShuffle;
+      case PlaybackMode.single:
+        return l10n.loopSingle;
+    }
+  }
+
+  Widget _buildOptionButton(
+    BuildContext context, {
+    required IconData icon,
+    required String label,
+    required VoidCallback onPressed,
+  }) {
+    return Expanded(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          IconButton(
+            icon: Icon(icon, color: Colors.white),
+            onPressed: onPressed,
+          ),
+          Text(
+            label,
+            style: const TextStyle(color: Colors.white70, fontSize: 12),
+          ),
+        ],
+      ),
+    );
   }
 
   String _formatDuration(Duration duration) {
