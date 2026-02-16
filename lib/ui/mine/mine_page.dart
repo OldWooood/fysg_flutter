@@ -1,11 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../api/download_service.dart';
+import '../../api/favorite_playlist_service.dart';
 import '../../models/song.dart';
+import '../../models/playlist.dart';
 import '../../providers/player_provider.dart';
 import '../common/mini_player.dart';
 import '../common/song_list_tile.dart';
 import '../../l10n/app_localizations.dart';
+import '../common/song_cover.dart';
+import '../categories/playlist_detail_page.dart';
 
 final downloadedSongsProvider = FutureProvider.autoDispose<List<Song>>((
   ref,
@@ -27,7 +31,7 @@ class _MinePageState extends ConsumerState<MinePage>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this);
+    _tabController = TabController(length: 3, vsync: this);
   }
 
   @override
@@ -44,8 +48,18 @@ class _MinePageState extends ConsumerState<MinePage>
         bottom: TabBar(
           controller: _tabController,
           tabs: [
-            Tab(text: AppLocalizations.of(context).history),
-            Tab(text: AppLocalizations.of(context).downloaded),
+            Tab(
+              icon: const Icon(Icons.history),
+              text: AppLocalizations.of(context).history,
+            ),
+            Tab(
+              icon: const Icon(Icons.download),
+              text: AppLocalizations.of(context).downloaded,
+            ),
+            Tab(
+              icon: const Icon(Icons.favorite),
+              text: AppLocalizations.of(context).favorites,
+            ),
           ],
         ),
       ),
@@ -54,7 +68,11 @@ class _MinePageState extends ConsumerState<MinePage>
           Expanded(
             child: TabBarView(
               controller: _tabController,
-              children: [_RecentList(), _DownloadList()],
+              children: [
+                _RecentList(),
+                _DownloadList(),
+                _FavoritePlaylistList(),
+              ],
             ),
           ),
           const MiniPlayer(),
@@ -131,6 +149,74 @@ class _DownloadList extends ConsumerWidget {
       },
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (e, s) => Center(child: Text('Error: $e')),
+    );
+  }
+}
+
+class _FavoritePlaylistList extends ConsumerWidget {
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final favoritesAsync = ref.watch(favoritePlaylistsProvider);
+
+    return favoritesAsync.when(
+      data: (playlists) {
+        if (playlists.isEmpty) {
+          return Center(child: Text(AppLocalizations.of(context).noFavorites));
+        }
+        return ListView.builder(
+          itemCount: playlists.length,
+          itemBuilder: (context, index) {
+            final playlist = playlists[index];
+            return _FavoritePlaylistTile(playlist: playlist);
+          },
+        );
+      },
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (e, s) => Center(child: Text('Error: $e')),
+    );
+  }
+}
+
+class _FavoritePlaylistTile extends ConsumerWidget {
+  final Playlist playlist;
+
+  const _FavoritePlaylistTile({required this.playlist});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return ListTile(
+      leading: SizedBox(
+        width: 48,
+        height: 48,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(8),
+          child: SongCover(
+            imageUrl: playlist.cover,
+            fit: BoxFit.cover,
+            placeholderIcon: Icons.queue_music,
+            placeholderIconSize: 24,
+          ),
+        ),
+      ),
+      title: Text(playlist.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+      subtitle: playlist.count != null ? Text('${playlist.count}') : null,
+      trailing: IconButton(
+        icon: const Icon(Icons.favorite),
+        onPressed: () async {
+          await ref
+              .read(favoritePlaylistServiceProvider)
+              .toggleFavorite(playlist);
+          ref.invalidate(favoritePlaylistsProvider);
+        },
+      ),
+      onTap: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => PlaylistDetailPage(playlist: playlist),
+          ),
+        );
+      },
     );
   }
 }

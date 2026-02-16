@@ -46,6 +46,12 @@ class AppLocalizations {
       'loop_order': 'Order',
       'loop_shuffle': 'Shuffle',
       'loop_single': 'Loop One',
+      'favorites': 'Playlist Favorites',
+      'favorite_playlist': 'Favorite Playlist',
+      'favorited': 'Favorited',
+      'add_favorite': 'Add to Favorites',
+      'remove_favorite': 'Remove Favorite',
+      'no_favorites': 'No favorites yet',
     },
     'zh': {
       'home': '首页',
@@ -82,6 +88,12 @@ class AppLocalizations {
       'loop_order': '顺序',
       'loop_shuffle': '随机',
       'loop_single': '单曲',
+      'favorites': '歌单收藏',
+      'favorite_playlist': '收藏歌单',
+      'favorited': '已收藏',
+      'add_favorite': '收藏',
+      'remove_favorite': '取消收藏',
+      'no_favorites': '暂无收藏',
     },
   };
 
@@ -132,6 +144,16 @@ class AppLocalizations {
       _localizedValues[locale.languageCode]!['loop_shuffle']!;
   String get loopSingle =>
       _localizedValues[locale.languageCode]!['loop_single']!;
+  String get favorites => _localizedValues[locale.languageCode]!['favorites']!;
+  String get favoritePlaylist =>
+      _localizedValues[locale.languageCode]!['favorite_playlist']!;
+  String get favorited => _localizedValues[locale.languageCode]!['favorited']!;
+  String get addFavorite =>
+      _localizedValues[locale.languageCode]!['add_favorite']!;
+  String get removeFavorite =>
+      _localizedValues[locale.languageCode]!['remove_favorite']!;
+  String get noFavorites =>
+      _localizedValues[locale.languageCode]!['no_favorites']!;
 }
 
 class AppLocalizationsDelegate extends LocalizationsDelegate<AppLocalizations> {

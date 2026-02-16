@@ -172,18 +172,19 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
                       key: ValueKey(song.cover),
                       fit: StackFit.expand,
                       children: [
-                        SongCover(
-                          imageUrl: song.cover,
-                          fit: BoxFit.cover,
-                          placeholderIcon: Icons.album,
-                          placeholderIconSize: 64,
-                        ),
-                        BackdropFilter(
-                          filter: ImageFilter.blur(sigmaX: 100, sigmaY: 100),
-                          child: Container(
-                            color: Colors.black.withOpacity(0.5),
+                        ImageFiltered(
+                          imageFilter: ImageFilter.blur(
+                            sigmaX: 100,
+                            sigmaY: 100,
+                          ),
+                          child: SongCover(
+                            imageUrl: song.cover,
+                            fit: BoxFit.cover,
+                            placeholderIcon: Icons.album,
+                            placeholderIconSize: 64,
                           ),
                         ),
+                        Container(color: Colors.black.withOpacity(0.5)),
                       ],
                     ),
                   )

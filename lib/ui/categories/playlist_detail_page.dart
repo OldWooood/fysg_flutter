@@ -6,6 +6,7 @@ import '../../models/playlist.dart';
 import '../../models/song.dart';
 import '../../providers/player_provider.dart';
 import '../../api/image_cache_service.dart';
+import '../../api/favorite_playlist_service.dart';
 import '../common/mini_player.dart';
 import '../common/song_list_tile.dart';
 import '../../l10n/app_localizations.dart';
@@ -113,6 +114,7 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
     final currentSongId = ref.watch(
       playerProvider.select((s) => s.currentSong?.id),
     );
+    final favoriteAsync = ref.watch(favoritePlaylistsProvider);
     return Scaffold(
       body: Column(
         children: [
@@ -142,6 +144,37 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
                           )
                         : Container(color: Theme.of(context).primaryColor),
                   ),
+                  actions: [
+                    favoriteAsync.when(
+                      data: (favorites) {
+                        final isFavorite = favorites.any(
+                          (p) =>
+                              p.id == widget.playlist.id &&
+                              p.type == widget.playlist.type,
+                        );
+                        return TextButton.icon(
+                          onPressed: () async {
+                            await ref
+                                .read(favoritePlaylistServiceProvider)
+                                .toggleFavorite(widget.playlist);
+                            ref.invalidate(favoritePlaylistsProvider);
+                          },
+                          icon: Icon(
+                            isFavorite ? Icons.favorite : Icons.favorite_border,
+                            color: Colors.white,
+                          ),
+                          label: Text(
+                            isFavorite
+                                ? AppLocalizations.of(context).removeFavorite
+                                : AppLocalizations.of(context).addFavorite,
+                            style: const TextStyle(color: Colors.white),
+                          ),
+                        );
+                      },
+                      loading: () => const SizedBox.shrink(),
+                      error: (_, __) => const SizedBox.shrink(),
+                    ),
+                  ],
                 ),
                 if (!_isLoading && _songs.isNotEmpty)
                   SliverToBoxAdapter(

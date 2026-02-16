@@ -67,12 +67,10 @@ class _MiniPlayerState extends ConsumerState<MiniPlayer> {
     final song = playerState.currentSong;
 
     if (song == null) return const SizedBox.shrink();
-    _updateDominantColor(song.cover);
-
-    final baseColor =
-        _dominantColor ?? Theme.of(context).scaffoldBackgroundColor;
-    final backgroundColor =
-        Color.lerp(baseColor, Colors.black, 0.18) ?? baseColor;
+    final colorScheme = Theme.of(context).colorScheme;
+    final backgroundColor = colorScheme.surface;
+    final foregroundColor = colorScheme.onSurface;
+    final secondaryColor = foregroundColor.withValues(alpha: 0.7);
 
     return GestureDetector(
       onTap: () {
@@ -120,7 +118,7 @@ class _MiniPlayerState extends ConsumerState<MiniPlayer> {
                     song.name,
                     style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                       fontWeight: FontWeight.bold,
-                      color: Colors.white,
+                      color: foregroundColor,
                     ),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
@@ -130,7 +128,7 @@ class _MiniPlayerState extends ConsumerState<MiniPlayer> {
                       song.artist!,
                       style: Theme.of(
                         context,
-                      ).textTheme.bodyMedium?.copyWith(color: Colors.white70),
+                      ).textTheme.bodyMedium?.copyWith(color: secondaryColor),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -139,9 +137,9 @@ class _MiniPlayerState extends ConsumerState<MiniPlayer> {
                     children: [
                       Expanded(
                         child: IconButton(
-                          icon: const Icon(
+                          icon: Icon(
                             Icons.skip_previous,
-                            color: Colors.white,
+                            color: foregroundColor,
                           ),
                           visualDensity: VisualDensity.compact,
                           onPressed: () {
@@ -155,7 +153,7 @@ class _MiniPlayerState extends ConsumerState<MiniPlayer> {
                             playerState.isPlaying
                                 ? Icons.pause
                                 : Icons.play_arrow,
-                            color: Colors.white,
+                            color: foregroundColor,
                           ),
                           visualDensity: VisualDensity.compact,
                           onPressed: () {
@@ -165,10 +163,7 @@ class _MiniPlayerState extends ConsumerState<MiniPlayer> {
                       ),
                       Expanded(
                         child: IconButton(
-                          icon: const Icon(
-                            Icons.skip_next,
-                            color: Colors.white,
-                          ),
+                          icon: Icon(Icons.skip_next, color: foregroundColor),
                           visualDensity: VisualDensity.compact,
                           onPressed: () {
                             ref.read(playerProvider.notifier).next();
@@ -177,9 +172,9 @@ class _MiniPlayerState extends ConsumerState<MiniPlayer> {
                       ),
                       Expanded(
                         child: IconButton(
-                          icon: const Icon(
+                          icon: Icon(
                             Icons.playlist_play,
-                            color: Colors.white,
+                            color: foregroundColor,
                           ),
                           visualDensity: VisualDensity.compact,
                           onPressed: () {

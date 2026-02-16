@@ -37,4 +37,24 @@ class Playlist {
       type: type,
     );
   }
+
+  factory Playlist.fromManifest(Map<String, dynamic> json) {
+    return Playlist(
+      id: json['id'],
+      name: json['name'],
+      cover: json['cover'],
+      count: json['count'],
+      type: json['type'],
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'name': name,
+      'cover': cover,
+      'count': count,
+      'type': type,
+    };
+  }
 }
