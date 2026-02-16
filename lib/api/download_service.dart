@@ -93,12 +93,6 @@ class DownloadService {
     }
   }
 
-  Future<void> clearPrefetchOnStartup() async {
-    final dir = await _getPrefetchDir();
-    if (!dir.existsSync()) return;
-    await dir.delete(recursive: true);
-  }
-
   Future<void> enforcePrefetchLimit({int maxBytes = _prefetchMaxBytes}) async {
     final dir = await _getPrefetchDir();
     if (!dir.existsSync()) return;

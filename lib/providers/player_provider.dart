@@ -171,8 +171,6 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
         _handleSongLoadFailure('playback_event_error');
       },
     );
-
-    _downloadService.clearPrefetchOnStartup();
   }
 
   Future<void> playSong(

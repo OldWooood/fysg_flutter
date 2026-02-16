@@ -28,12 +28,24 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
   Timer? _scrollTimer;
   int _lastScrolledIndex = -1;
   int? _currentSongId;
+  int _currentLyricIndex = -1;
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
     WakelockPlus.enable();
+    _tabController.addListener(() {
+      if (_tabController.indexIsChanging) return;
+      if (_tabController.index == 1) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          if (_currentLyricIndex >= 0) {
+            _scrollToCurrentLine(_currentLyricIndex);
+          }
+        });
+      }
+    });
   }
 
   @override
@@ -125,6 +137,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
         break;
       }
     }
+
+    _currentLyricIndex = currentIndex;
 
     if (currentIndex != -1 && _tabController.index == 1) {
       // Only auto-scroll if we are looking at lyrics tab
