@@ -11,15 +11,54 @@ final downloadServiceProvider = Provider((ref) => DownloadService());
 class DownloadService {
   final Dio _dio = Dio();
   static const String _downloadKey = 'downloaded_songs';
+  static const Map<String, String> _downloadHeaders = {
+    'User-Agent':
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+    'Referer': 'https://www.fysg.org/',
+  };
 
   Future<String> get _localPath async {
     final directory = await getApplicationDocumentsDirectory();
     return directory.path;
   }
 
+  Future<String> get _prefetchPath async {
+    final directory = await getTemporaryDirectory();
+    return directory.path;
+  }
+
   Future<File> getLocalFile(int songId) async {
     final path = await _localPath;
     return File('$path/songs/$songId.mp3');
+  }
+
+  Future<File> getPrefetchFile(int songId) async {
+    final path = await _prefetchPath;
+    return File('$path/prefetch/$songId.mp3');
+  }
+
+  Future<bool> isPrefetched(int songId) async {
+    final file = await getPrefetchFile(songId);
+    return file.existsSync();
+  }
+
+  Future<void> deletePrefetch(int songId) async {
+    final file = await getPrefetchFile(songId);
+    if (file.existsSync()) {
+      file.deleteSync();
+    }
+  }
+
+  Future<void> prefetchSong(Song song, {Function(int, int)? onProgress}) async {
+    if (song.url == null) return;
+
+    final file = await getPrefetchFile(song.id);
+    if (file.existsSync()) return;
+    if (!file.parent.existsSync()) {
+      file.parent.createSync(recursive: true);
+    }
+
+    await _downloadToFile(song.url!, file.path, onProgress: onProgress);
   }
 
   Future<void> downloadSong(Song song, {Function(int, int)? onProgress}) async {
@@ -30,21 +69,23 @@ class DownloadService {
       file.parent.createSync(recursive: true);
     }
 
-    await _dio.download(
-      song.url!,
-      file.path,
-      onReceiveProgress: onProgress,
-      options: Options(
-        headers: {
-          'User-Agent':
-              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-          'Referer': 'https://www.fysg.org/',
-        },
-      ),
-    );
+    await _downloadToFile(song.url!, file.path, onProgress: onProgress);
 
     // Save to manifest
     await _saveToManifest(song);
+  }
+
+  Future<void> _downloadToFile(
+    String url,
+    String path, {
+    Function(int, int)? onProgress,
+  }) async {
+    await _dio.download(
+      url,
+      path,
+      onReceiveProgress: onProgress,
+      options: Options(headers: _downloadHeaders),
+    );
   }
 
   Future<void> _saveToManifest(Song song) async {

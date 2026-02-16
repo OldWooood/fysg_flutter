@@ -9,6 +9,7 @@ import '../../providers/player_provider.dart';
 import '../../models/song.dart';
 import '../common/song_cover.dart';
 import '../../l10n/app_localizations.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 
 class PlayerPage extends ConsumerStatefulWidget {
   const PlayerPage({Key? key}) : super(key: key);
@@ -32,6 +33,14 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
+    WakelockPlus.enable();
+  }
+
+  @override
+  void dispose() {
+    WakelockPlus.disable();
+    _tabController.dispose();
+    super.dispose();
   }
 
   // Simple LRC parser

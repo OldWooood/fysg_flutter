@@ -1,4 +1,3 @@
-import 'dart:math';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:just_audio/just_audio.dart';
 import '../models/song.dart';
@@ -96,7 +95,6 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
   static const int _maxSongLoadRetries = 2;
   final Ref _ref;
   final AudioPlayer _audioPlayer = AudioPlayer();
-  final AudioPlayer _prefetchPlayer = AudioPlayer();
   final ConcatenatingAudioSource _playlist = ConcatenatingAudioSource(
     children: [],
   );
@@ -246,7 +244,11 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
     final nextSong = state.queue[nextIndex];
     if (_lastPrefetchSongId == nextSong.id) return;
 
+    final previousPrefetchId = _lastPrefetchSongId;
     _lastPrefetchSongId = nextSong.id;
+    if (previousPrefetchId != null && previousPrefetchId != nextSong.id) {
+      _downloadService.deletePrefetch(previousPrefetchId);
+    }
     _prefetchSong(nextSong);
   }
 
@@ -258,15 +260,7 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
       case PlaybackMode.sequence:
         return (state.currentIndex + 1) % state.queue.length;
       case PlaybackMode.shuffle:
-        final nextIndex = _audioPlayer.nextIndex;
-        if (nextIndex != null) return nextIndex;
-        if (state.queue.length <= 1) return null;
-        final rand = Random();
-        var candidate = state.currentIndex;
-        while (candidate == state.currentIndex) {
-          candidate = rand.nextInt(state.queue.length);
-        }
-        return candidate;
+        return _audioPlayer.nextIndex;
     }
   }
 
@@ -274,9 +268,8 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
     if (_isPrefetching) return;
     _isPrefetching = true;
     try {
-      final source = await _createAudioSource(song);
-      await _prefetchPlayer.setAudioSource(source, preload: true);
-      await _prefetchPlayer.load();
+      if (await _downloadService.isDownloaded(song.id)) return;
+      await _downloadService.prefetchSong(song);
     } catch (e) {
       print('Prefetch failed for song ${song.id}: $e');
     } finally {
@@ -286,12 +279,16 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
 
   @override
   void dispose() {
-    _prefetchPlayer.dispose();
     _audioPlayer.dispose();
     super.dispose();
   }
 
   Future<AudioSource> _createAudioSource(Song song) async {
+    final prefetched = await _downloadService.getPrefetchFile(song.id);
+    if (prefetched.existsSync()) {
+      return AudioSource.file(prefetched.path);
+    }
+
     final localFile = await _downloadService.getLocalFile(song.id);
 
     if (localFile.existsSync()) {
