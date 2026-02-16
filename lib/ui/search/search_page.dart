@@ -1,13 +1,10 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../api/fysg_service.dart';
 import '../../models/song.dart';
 import '../../providers/player_provider.dart';
 import '../common/mini_player.dart';
 import '../../l10n/app_localizations.dart';
-import '../../api/image_cache_service.dart';
-import 'package:cached_network_image/cached_network_image.dart';
 import 'search_results_page.dart';
 import '../../api/search_history_service.dart';
 
@@ -67,10 +64,11 @@ class _SearchPageState extends ConsumerState<SearchPage> {
 
   void _performSearch(String query) async {
     if (query.isEmpty) return;
-    
+
     await ref.read(searchHistoryServiceProvider).addQuery(query);
     ref.invalidate(searchHistoryProvider);
-    
+    if (!mounted) return;
+
     Navigator.push(
       context,
       MaterialPageRoute(

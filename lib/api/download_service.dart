@@ -6,7 +6,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/song.dart';
 import 'dart:convert';
 
-final downloadServiceProvider = Provider((ref) => DownloadService());
+final downloadServiceProvider = Provider((ref) {
+  final service = DownloadService();
+  ref.onDispose(service.dispose);
+  return service;
+});
 
 class DownloadService {
   final Dio _dio = Dio();
@@ -18,6 +22,10 @@ class DownloadService {
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
     'Referer': 'https://www.fysg.org/',
   };
+
+  void dispose() {
+    _dio.close(force: true);
+  }
 
   Future<String> get _localPath async {
     final directory = await getApplicationDocumentsDirectory();

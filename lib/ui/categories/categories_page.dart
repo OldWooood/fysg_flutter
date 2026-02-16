@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cached_network_image/cached_network_image.dart';
@@ -28,16 +29,17 @@ class _CategoriesPageState extends ConsumerState<CategoriesPage>
   }
 
   @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(
-          AppLocalizations.of(context).browse,
-          style: const TextStyle(
-            fontFamily: 'Playfair Display',
-            fontWeight: FontWeight.bold,
-          ),
-        ),
+        toolbarHeight: 0,
+        automaticallyImplyLeading: false,
         bottom: TabBar(
           controller: _tabController,
           labelColor: Theme.of(context).primaryColor,
@@ -110,7 +112,7 @@ class _CategoryGridState extends ConsumerState<_CategoryGrid> {
     try {
       items = await _fetchByType(0);
     } catch (e) {
-      print('Error fetching ${widget.type}: $e');
+      debugPrint('Error fetching ${widget.type}: $e');
     }
 
     if (!mounted) return;
@@ -140,7 +142,7 @@ class _CategoryGridState extends ConsumerState<_CategoryGrid> {
     try {
       items = await _fetchByType(nextPage);
     } catch (e) {
-      print('Error loading more ${widget.type}: $e');
+      debugPrint('Error loading more ${widget.type}: $e');
     }
 
     if (!mounted) return;

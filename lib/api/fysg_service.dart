@@ -34,6 +34,10 @@ class FysgService {
 
   FysgService({http.Client? client}) : _client = client ?? http.Client();
 
+  void dispose() {
+    _client.close();
+  }
+
   Future<List<Map<String, dynamic>>> getSearchSuggestions(
     String query, {
     int size = 10,
@@ -195,24 +199,28 @@ class FysgService {
   }
 
   Future<List<Song>> _fetchRecommendedSongs(int page, int size) async {
-    // Using "Top Played Monthly" as recommendation
-    final response = await _client.get(
-      Uri.parse(
-        '$_apiBase/songs?page=$page&size=$size&sort=playM&$_commonParams',
-      ),
-      headers: _headers,
-    );
+    try {
+      // Using "Top Played Monthly" as recommendation
+      final response = await _client.get(
+        Uri.parse(
+          '$_apiBase/songs?page=$page&size=$size&sort=playM&$_commonParams',
+        ),
+        headers: _headers,
+      );
 
-    if (response.statusCode == 200) {
-      final jsonResponse = json.decode(utf8.decode(response.bodyBytes));
-      if (jsonResponse['code'] == 0 && jsonResponse['data'] != null) {
-        final data = jsonResponse['data'];
-        if (data['list'] != null) {
-          return (data['list'] as List)
-              .map((item) => Song.fromJson(item, assetBase: _assetBase))
-              .toList();
+      if (response.statusCode == 200) {
+        final jsonResponse = json.decode(utf8.decode(response.bodyBytes));
+        if (jsonResponse['code'] == 0 && jsonResponse['data'] != null) {
+          final data = jsonResponse['data'];
+          if (data['list'] != null) {
+            return (data['list'] as List)
+                .map((item) => Song.fromJson(item, assetBase: _assetBase))
+                .toList();
+          }
         }
       }
+    } catch (e) {
+      debugPrint('Error fetching recommended songs: $e');
     }
     return [];
   }
@@ -249,28 +257,33 @@ class FysgService {
   }
 
   Future<Song> _fetchSongDetails(int songId) async {
-    final response = await _client.get(
-      Uri.parse('$_apiBase/songs/$songId?$_commonParams'),
-      headers: _headers,
-    );
+    try {
+      final response = await _client.get(
+        Uri.parse('$_apiBase/songs/$songId?$_commonParams'),
+        headers: _headers,
+      );
 
-    if (response.statusCode != 200) {
-      throw Exception('Failed to load song details');
-    }
+      if (response.statusCode != 200) {
+        throw Exception('Failed to load song details');
+      }
 
-    final jsonResponse = json.decode(utf8.decode(response.bodyBytes));
-    dynamic songData = jsonResponse;
-    if (jsonResponse is Map && jsonResponse['data'] != null) {
-      songData = jsonResponse['data'];
-    }
-    if (songData is! Map) {
-      throw Exception('Invalid song details payload');
-    }
+      final jsonResponse = json.decode(utf8.decode(response.bodyBytes));
+      dynamic songData = jsonResponse;
+      if (jsonResponse is Map && jsonResponse['data'] != null) {
+        songData = jsonResponse['data'];
+      }
+      if (songData is! Map) {
+        throw Exception('Invalid song details payload');
+      }
 
-    return Song.fromJson(
-      Map<String, dynamic>.from(songData),
-      assetBase: _assetBase,
-    );
+      return Song.fromJson(
+        Map<String, dynamic>.from(songData),
+        assetBase: _assetBase,
+      );
+    } catch (e) {
+      debugPrint('Error fetching song details ($songId): $e');
+      rethrow;
+    }
   }
 
   // Helper to fetch audio URL if not present in details (Keeping for safety, though likely not needed with assetBase fix)
@@ -287,24 +300,28 @@ class FysgService {
     int size = 20,
     String type = 'playlist',
   }) async {
-    final response = await _client.get(
-      Uri.parse('$_apiBase/$endpoint?page=$page&size=$size&$_commonParams'),
-      headers: _headers,
-    );
+    try {
+      final response = await _client.get(
+        Uri.parse('$_apiBase/$endpoint?page=$page&size=$size&$_commonParams'),
+        headers: _headers,
+      );
 
-    if (response.statusCode == 200) {
-      final jsonResponse = json.decode(utf8.decode(response.bodyBytes));
-      if (jsonResponse['code'] == 0 && jsonResponse['data'] != null) {
-        final data = jsonResponse['data'];
-        if (data['list'] != null) {
-          return (data['list'] as List).map((item) {
-            // Determine type based on endpoint if generic
-            String finalType = type;
-            // If fetching authors, type is 'author', etc.
-            return Playlist.fromJson(item, finalType);
-          }).toList();
+      if (response.statusCode == 200) {
+        final jsonResponse = json.decode(utf8.decode(response.bodyBytes));
+        if (jsonResponse['code'] == 0 && jsonResponse['data'] != null) {
+          final data = jsonResponse['data'];
+          if (data['list'] != null) {
+            return (data['list'] as List).map((item) {
+              // Determine type based on endpoint if generic
+              String finalType = type;
+              // If fetching authors, type is 'author', etc.
+              return Playlist.fromJson(item, finalType);
+            }).toList();
+          }
         }
       }
+    } catch (e) {
+      debugPrint('Error fetching collection $endpoint: $e');
     }
     return [];
   }
@@ -339,23 +356,27 @@ class FysgService {
       return [];
     }
 
-    final response = await _client.get(
-      Uri.parse(
-        '$_apiBase/$endpoint?$param&page=$page&size=$size&$_commonParams',
-      ),
-      headers: _headers,
-    );
+    try {
+      final response = await _client.get(
+        Uri.parse(
+          '$_apiBase/$endpoint?$param&page=$page&size=$size&$_commonParams',
+        ),
+        headers: _headers,
+      );
 
-    if (response.statusCode == 200) {
-      final jsonResponse = json.decode(utf8.decode(response.bodyBytes));
-      if (jsonResponse['code'] == 0 && jsonResponse['data'] != null) {
-        final data = jsonResponse['data'];
-        if (data['list'] != null) {
-          return (data['list'] as List)
-              .map((item) => Song.fromJson(item, assetBase: _assetBase))
-              .toList();
+      if (response.statusCode == 200) {
+        final jsonResponse = json.decode(utf8.decode(response.bodyBytes));
+        if (jsonResponse['code'] == 0 && jsonResponse['data'] != null) {
+          final data = jsonResponse['data'];
+          if (data['list'] != null) {
+            return (data['list'] as List)
+                .map((item) => Song.fromJson(item, assetBase: _assetBase))
+                .toList();
+          }
         }
       }
+    } catch (e) {
+      debugPrint('Error fetching collection songs ($type:$id): $e');
     }
     return [];
   }

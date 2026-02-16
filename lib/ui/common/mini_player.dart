@@ -1,9 +1,6 @@
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:palette_generator/palette_generator.dart';
 
-import '../../api/image_cache_service.dart';
 import '../../providers/player_provider.dart';
 import '../player/player_page.dart';
 import '../player/playlist_bottom_sheet.dart';
@@ -17,50 +14,6 @@ class MiniPlayer extends ConsumerStatefulWidget {
 }
 
 class _MiniPlayerState extends ConsumerState<MiniPlayer> {
-  static final Map<String, Color> _dominantColorCache = {};
-  String? _coverUrl;
-  Color? _dominantColor;
-
-  Future<void> _updateDominantColor(String? coverUrl) async {
-    if (coverUrl == null || coverUrl.isEmpty) {
-      if (!mounted) return;
-      setState(() {
-        _coverUrl = null;
-        _dominantColor = null;
-      });
-      return;
-    }
-    if (_coverUrl == coverUrl) return;
-
-    _coverUrl = coverUrl;
-    final cached = _dominantColorCache[coverUrl];
-    if (cached != null) {
-      if (!mounted) return;
-      setState(() => _dominantColor = cached);
-      return;
-    }
-
-    try {
-      final palette = await PaletteGenerator.fromImageProvider(
-        CachedNetworkImageProvider(
-          coverUrl,
-          headers: ImageCacheService.headers,
-        ),
-        size: const Size(64, 64),
-        maximumColorCount: 12,
-      );
-      final color = palette.dominantColor?.color;
-      if (color != null) {
-        _dominantColorCache[coverUrl] = color;
-      }
-      if (!mounted || _coverUrl != coverUrl) return;
-      setState(() => _dominantColor = color);
-    } catch (_) {
-      if (!mounted || _coverUrl != coverUrl) return;
-      setState(() => _dominantColor = null);
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final playerState = ref.watch(playerMiniStateProvider);

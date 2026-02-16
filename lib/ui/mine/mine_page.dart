@@ -35,16 +35,17 @@ class _MinePageState extends ConsumerState<MinePage>
   }
 
   @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(
-          AppLocalizations.of(context).mine,
-          style: const TextStyle(
-            fontFamily: 'Playfair Display',
-            fontWeight: FontWeight.bold,
-          ),
-        ),
+        toolbarHeight: 0,
+        automaticallyImplyLeading: false,
         bottom: TabBar(
           controller: _tabController,
           tabs: [

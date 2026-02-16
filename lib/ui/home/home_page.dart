@@ -93,23 +93,6 @@ class _HomePageState extends ConsumerState<HomePage> {
       body: SafeArea(
         child: Column(
           children: [
-            // Header
-            Padding(
-              padding: const EdgeInsets.symmetric(
-                horizontal: 20.0,
-                vertical: 10.0,
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    AppLocalizations.of(context).appTitle,
-                    style: Theme.of(context).textTheme.displayMedium,
-                  ),
-                ],
-              ),
-            ),
-
             Expanded(
               child: CustomScrollView(
                 controller: _scrollController,

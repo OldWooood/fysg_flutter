@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -8,7 +9,11 @@ import '../api/recently_played_service.dart';
 import '../api/download_service.dart';
 import '../audio/app_audio_handler.dart';
 
-final fysgServiceProvider = Provider((ref) => FysgService());
+final fysgServiceProvider = Provider((ref) {
+  final service = FysgService();
+  ref.onDispose(service.dispose);
+  return service;
+});
 
 final recentlyPlayedServiceProvider = Provider(
   (ref) => RecentlyPlayedService(),
@@ -47,6 +52,7 @@ final playerProvider = StateNotifierProvider<PlayerNotifier, FysgPlayerState>((
   return PlayerNotifier(
     ref,
     ref.watch(fysgServiceProvider),
+    ref.watch(downloadServiceProvider),
     ref.watch(recentlyPlayedServiceProvider),
   );
 });
@@ -105,7 +111,7 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
     children: [],
   );
   final FysgService _service;
-  final DownloadService _downloadService = DownloadService();
+  final DownloadService _downloadService;
   final RecentlyPlayedService _recentService;
   final Map<int, Song> _songDetailsCache = {};
   final Set<int> _songDetailsLoading = {};
@@ -119,7 +125,12 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
   Set<int> _prefetchCachedIds = {};
   bool _queueStateRestored = false;
 
-  PlayerNotifier(this._ref, this._service, this._recentService)
+  PlayerNotifier(
+    this._ref,
+    this._service,
+    this._downloadService,
+    this._recentService,
+  )
     : super(FysgPlayerState()) {
     _init();
   }
@@ -132,7 +143,7 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
       await _audioPlayer.setLoopMode(LoopMode.all);
       await _audioPlayer.setShuffleModeEnabled(false);
     } catch (e) {
-      print('Error initializing audio player: $e');
+      debugPrint('Error initializing audio player: $e');
     }
 
     _audioPlayer.playerStateStream.listen((playerState) {
@@ -150,7 +161,7 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
         final song = state.queue[index];
         if (state.currentIndex != index) {
           state = state.copyWith(currentIndex: index, currentSong: song);
-          _persistQueueState();
+          _persistPlaybackState();
           _syncBackgroundNowPlaying(song);
           _recentService.addSong(song);
           _ref.invalidate(recentSongsProvider);
@@ -177,7 +188,7 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
         // Log playback events for debugging stalls
       },
       onError: (Object e, StackTrace st) {
-        print('Playback error: $e');
+        debugPrint('Playback error: $e');
         _handleSongLoadFailure('playback_event_error');
       },
     );
@@ -205,7 +216,7 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
       // Single song or new queue
       await logQueue([song], 0);
     } catch (e) {
-      print("Error playing song (retry $retryCount): $e");
+      debugPrint("Error playing song (retry $retryCount): $e");
       if (retryCount < _maxSongLoadRetries) {
         await Future.delayed(const Duration(seconds: 1));
         return playSong(song, keepQueue: keepQueue, retryCount: retryCount + 1);
@@ -222,7 +233,7 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
     _songLoadRetryCount[currentSong.id] = retries;
 
     if (retries <= _maxSongLoadRetries) {
-      print(
+      debugPrint(
         'Retry loading song ${currentSong.id} ($retries/$_maxSongLoadRetries), reason: $reason',
       );
       try {
@@ -230,11 +241,11 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
         await _audioPlayer.play();
         return;
       } catch (e) {
-        print('Retry failed for song ${currentSong.id}: $e');
+        debugPrint('Retry failed for song ${currentSong.id}: $e');
       }
     }
 
-    print(
+    debugPrint(
       'Skip song ${currentSong.id} after retries exhausted, reason: $reason',
     );
     _songLoadRetryCount[currentSong.id] = 0;
@@ -285,7 +296,7 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
       await _downloadService.prefetchSong(song);
       _prefetchCachedIds.add(song.id);
     } catch (e) {
-      print('Prefetch failed for song ${song.id}: $e');
+      debugPrint('Prefetch failed for song ${song.id}: $e');
     } finally {
       _isPrefetching = false;
     }
@@ -355,15 +366,15 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
       _downloadService
           .downloadSong(song)
           .then((_) {
-            print('Downloaded ${song.name}');
+        debugPrint('Downloaded ${song.name}');
           })
           .catchError((e) {
-            print('Download error: $e');
+        debugPrint('Download error: $e');
           });
 
       return DownloadResult.started;
     } catch (e) {
-      print('Download error: $e');
+      debugPrint('Download error: $e');
       return null;
     }
   }
@@ -374,6 +385,7 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
 
     final buildToken = ++_queueBuildToken;
     final preferred = await _buildPlayableEntry(songs[index]);
+    if (!mounted || buildToken != _queueBuildToken) return;
     var firstPlayable = preferred;
     var chosenOriginalIndex = index;
     if (firstPlayable == null) {
@@ -381,6 +393,7 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
         final originalIndex = (index + offset) % songs.length;
         final song = songs[originalIndex];
         firstPlayable = await _buildPlayableEntry(song);
+        if (!mounted || buildToken != _queueBuildToken) return;
         if (firstPlayable != null) {
           chosenOriginalIndex = originalIndex;
           break;
@@ -389,7 +402,7 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
     }
 
     if (firstPlayable == null) {
-      print('No playable songs in queue');
+      debugPrint('No playable songs in queue');
       return;
     }
 
@@ -405,7 +418,8 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
       currentIndex: safeDisplayIndex,
       currentSong: displayQueue[safeDisplayIndex],
     );
-    _persistQueueState();
+    _persistQueueCache();
+    _persistPlaybackState();
     _syncBackgroundNowPlaying(displayQueue[safeDisplayIndex]);
     _suppressIndexSync = true;
 
@@ -417,6 +431,7 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
       preload: true,
     );
 
+    if (!mounted || buildToken != _queueBuildToken) return;
     await _audioPlayer.seek(Duration.zero, index: 0);
     _audioPlayer.play();
 
@@ -483,12 +498,18 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
     }
   }
 
-  Future<void> _persistQueueState({bool includePosition = false}) async {
+  Future<void> _persistQueueCache() async {
     final queue = state.queue;
     if (queue.isEmpty || state.currentIndex < 0) return;
     final prefs = await SharedPreferences.getInstance();
     final encoded = queue.map((s) => json.encode(s.toJson())).toList();
     await prefs.setStringList(_queueCacheKey, encoded);
+  }
+
+  Future<void> _persistPlaybackState({bool includePosition = false}) async {
+    final queue = state.queue;
+    if (queue.isEmpty || state.currentIndex < 0) return;
+    final prefs = await SharedPreferences.getInstance();
     await prefs.setInt(_queueIndexKey, state.currentIndex);
     if (includePosition) {
       await prefs.setInt(_queuePositionKey, state.position.inMilliseconds);
@@ -573,7 +594,7 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
         final source = await _createAudioSource(resolvedSong);
         return (song: resolvedSong, source: source);
       } catch (e) {
-        print('Skip unplayable song ${song.id}: $e');
+        debugPrint('Skip unplayable song ${song.id}: $e');
         return null;
       }
     }
@@ -613,7 +634,7 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
       _songDetailsCache[songId] = details;
       _mergeSongDetailsIntoState(details);
     } catch (e) {
-      print('Failed to load song details for $songId: $e');
+      debugPrint('Failed to load song details for $songId: $e');
     } finally {
       _songDetailsLoading.remove(songId);
     }
@@ -707,7 +728,7 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
   void stopPlayback() {
     _audioPlayer.stop();
     state = state.copyWith(isPlaying: false);
-    _persistQueueState(includePosition: true);
+    _persistPlaybackState(includePosition: true);
   }
 
   void seek(Duration position) {
