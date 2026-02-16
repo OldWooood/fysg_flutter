@@ -90,9 +90,8 @@ class _HomePageState extends ConsumerState<HomePage> {
     final recentAsync = ref.watch(recentSongsProvider);
 
     return Scaffold(
-      body: SafeArea(
-        child: Column(
-          children: [
+      body: Column(
+        children: [
             Expanded(
               child: CustomScrollView(
                 controller: _scrollController,
@@ -253,7 +252,6 @@ class _HomePageState extends ConsumerState<HomePage> {
             const MiniPlayer(),
           ],
         ),
-      ),
     );
   }
 }

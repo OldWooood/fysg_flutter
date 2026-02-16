@@ -220,44 +220,46 @@ class _SearchResultsPageState extends ConsumerState<SearchResultsPage> {
           ),
         ],
       ),
-      body: Column(
-        children: [
-          Expanded(
-            child:
-                (_searchController.text.isNotEmpty &&
-                    _searchController.text != _currentQuery)
-                ? _buildSuggestions()
-                : _isLoading
-                ? const Center(child: CircularProgressIndicator())
-                : _results.isEmpty
-                ? Center(child: Text(AppLocalizations.of(context).noResults))
-                : ListView.builder(
-                    controller: _scrollController,
-                    cacheExtent: 800,
-                    addAutomaticKeepAlives: false,
-                    itemCount: _results.length + (_isLoadingMore ? 1 : 0),
-                    itemBuilder: (context, index) {
-                      if (index == _results.length) {
-                        return const Padding(
-                          padding: EdgeInsets.all(16),
-                          child: Center(child: CircularProgressIndicator()),
+      body: SafeArea(
+        child: Column(
+          children: [
+            Expanded(
+              child:
+                  (_searchController.text.isNotEmpty &&
+                      _searchController.text != _currentQuery)
+                  ? _buildSuggestions()
+                  : _isLoading
+                  ? const Center(child: CircularProgressIndicator())
+                  : _results.isEmpty
+                  ? Center(child: Text(AppLocalizations.of(context).noResults))
+                  : ListView.builder(
+                      controller: _scrollController,
+                      cacheExtent: 800,
+                      addAutomaticKeepAlives: false,
+                      itemCount: _results.length + (_isLoadingMore ? 1 : 0),
+                      itemBuilder: (context, index) {
+                        if (index == _results.length) {
+                          return const Padding(
+                            padding: EdgeInsets.all(16),
+                            child: Center(child: CircularProgressIndicator()),
+                          );
+                        }
+                        final song = _results[index];
+                        return SongListTile(
+                          key: ValueKey(song.id),
+                          song: song,
+                          onTap: () {
+                            ref
+                                .read(playerProvider.notifier)
+                                .logQueue(_results, index);
+                          },
                         );
-                      }
-                      final song = _results[index];
-                      return SongListTile(
-                        key: ValueKey(song.id),
-                        song: song,
-                        onTap: () {
-                          ref
-                              .read(playerProvider.notifier)
-                              .logQueue(_results, index);
-                        },
-                      );
-                    },
-                  ),
-          ),
-          const MiniPlayer(),
-        ],
+                      },
+                    ),
+            ),
+            const MiniPlayer(),
+          ],
+        ),
       ),
     );
   }

@@ -116,147 +116,151 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
     );
     final favoriteAsync = ref.watch(favoritePlaylistsProvider);
     return Scaffold(
-      body: Column(
-        children: [
-          Expanded(
-            child: CustomScrollView(
-              controller: _scrollController,
-              cacheExtent: 800,
-              slivers: [
-                SliverAppBar(
-                  expandedHeight: 250,
-                  pinned: true,
-                  flexibleSpace: FlexibleSpaceBar(
-                    title: Text(
-                      widget.playlist.name,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        shadows: [Shadow(color: Colors.black, blurRadius: 10)],
-                      ),
-                    ),
-                    background: widget.playlist.cover != null
-                        ? CachedNetworkImage(
-                            imageUrl: widget.playlist.cover!,
-                            httpHeaders: ImageCacheService.headers,
-                            fit: BoxFit.cover,
-                          )
-                        : Container(color: Theme.of(context).primaryColor),
-                  ),
-                  actions: [
-                    favoriteAsync.when(
-                      data: (favorites) {
-                        final isFavorite = favorites.any(
-                          (p) =>
-                              p.id == widget.playlist.id &&
-                              p.type == widget.playlist.type,
-                        );
-                        return TextButton.icon(
-                          onPressed: () async {
-                            await ref
-                                .read(favoritePlaylistServiceProvider)
-                                .toggleFavorite(widget.playlist);
-                            ref.invalidate(favoritePlaylistsProvider);
-                          },
-                          icon: Icon(
-                            isFavorite ? Icons.favorite : Icons.favorite_border,
-                            color: Colors.white,
-                          ),
-                          label: Text(
-                            isFavorite
-                                ? AppLocalizations.of(context).removeFavorite
-                                : AppLocalizations.of(context).addFavorite,
-                            style: const TextStyle(color: Colors.white),
-                          ),
-                        );
-                      },
-                      loading: () => const SizedBox.shrink(),
-                      error: (_, __) => const SizedBox.shrink(),
-                    ),
-                  ],
-                ),
-                if (!_isLoading && _songs.isNotEmpty)
-                  SliverToBoxAdapter(
-                    child: Padding(
-                      padding: const EdgeInsets.all(16.0),
-                      child: ElevatedButton.icon(
-                        onPressed: () {
-                          ref.read(playerProvider.notifier).logQueue(_songs, 0);
-                        },
-                        icon: const Icon(Icons.play_arrow),
-                        label: Text(
-                          AppLocalizations.of(context).playAll,
-                          style: const TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 18,
-                          ),
-                        ),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Theme.of(context).primaryColor,
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 12),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8),
-                          ),
+      body: SafeArea(
+        child: Column(
+          children: [
+            Expanded(
+              child: CustomScrollView(
+                controller: _scrollController,
+                cacheExtent: 800,
+                slivers: [
+                  SliverAppBar(
+                    expandedHeight: 250,
+                    pinned: true,
+                    flexibleSpace: FlexibleSpaceBar(
+                      title: Text(
+                        widget.playlist.name,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          shadows: [Shadow(color: Colors.black, blurRadius: 10)],
                         ),
                       ),
+                      background: widget.playlist.cover != null
+                          ? CachedNetworkImage(
+                              imageUrl: widget.playlist.cover!,
+                              httpHeaders: ImageCacheService.headers,
+                              fit: BoxFit.cover,
+                            )
+                          : Container(color: Theme.of(context).primaryColor),
                     ),
-                  ),
-                if (_isLoading)
-                  const SliverFillRemaining(
-                    child: Center(child: CircularProgressIndicator()),
-                  )
-                else ...[
-                  SliverList(
-                    delegate: SliverChildBuilderDelegate(
-                      (context, index) {
-                        final song = _songs[index];
-                        final isPlaying = currentSongId == song.id;
-
-                        return SongListTile(
-                          key: ValueKey(song.id),
-                          song: song,
-                          leading: Text(
-                            '${index + 1}',
-                            style: const TextStyle(
-                              color: Colors.grey,
-                              fontSize: 16,
+                    actions: [
+                      favoriteAsync.when(
+                        data: (favorites) {
+                          final isFavorite = favorites.any(
+                            (p) =>
+                                p.id == widget.playlist.id &&
+                                p.type == widget.playlist.type,
+                          );
+                          return TextButton.icon(
+                            onPressed: () async {
+                              await ref
+                                  .read(favoritePlaylistServiceProvider)
+                                  .toggleFavorite(widget.playlist);
+                              ref.invalidate(favoritePlaylistsProvider);
+                            },
+                            icon: Icon(
+                              isFavorite ? Icons.favorite : Icons.favorite_border,
+                              color: Colors.white,
                             ),
-                          ),
-                          titleStyle: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            color: isPlaying
-                                ? Theme.of(context).primaryColor
-                                : null,
-                          ),
-                          subtitleStyle: const TextStyle(fontSize: 12),
-                          trailing: const Icon(Icons.play_circle_outline),
-                          onTap: () {
+                            label: Text(
+                              isFavorite
+                                  ? AppLocalizations.of(context).removeFavorite
+                                  : AppLocalizations.of(context).addFavorite,
+                              style: const TextStyle(color: Colors.white),
+                            ),
+                          );
+                        },
+                        loading: () => const SizedBox.shrink(),
+                        error: (_, __) => const SizedBox.shrink(),
+                      ),
+                    ],
+                  ),
+                  if (!_isLoading && _songs.isNotEmpty)
+                    SliverToBoxAdapter(
+                      child: Padding(
+                        padding: const EdgeInsets.all(16.0),
+                        child: ElevatedButton.icon(
+                          onPressed: () {
                             ref
                                 .read(playerProvider.notifier)
-                                .logQueue(_songs, index);
+                                .logQueue(_songs, 0);
                           },
-                        );
-                      },
-                      childCount: _songs.length,
-                      addAutomaticKeepAlives: false,
-                    ),
-                  ),
-                  if (_isLoadingMore)
-                    const SliverToBoxAdapter(
-                      child: Padding(
-                        padding: EdgeInsets.all(16),
-                        child: Center(child: CircularProgressIndicator()),
+                          icon: const Icon(Icons.play_arrow),
+                          label: Text(
+                            AppLocalizations.of(context).playAll,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 18,
+                            ),
+                          ),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Theme.of(context).primaryColor,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                          ),
+                        ),
                       ),
                     ),
-                  const SliverToBoxAdapter(child: SizedBox(height: 100)),
+                  if (_isLoading)
+                    const SliverFillRemaining(
+                      child: Center(child: CircularProgressIndicator()),
+                    )
+                  else ...[
+                    SliverList(
+                      delegate: SliverChildBuilderDelegate(
+                        (context, index) {
+                          final song = _songs[index];
+                          final isPlaying = currentSongId == song.id;
+
+                          return SongListTile(
+                            key: ValueKey(song.id),
+                            song: song,
+                            leading: Text(
+                              '${index + 1}',
+                              style: const TextStyle(
+                                color: Colors.grey,
+                                fontSize: 16,
+                              ),
+                            ),
+                            titleStyle: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: isPlaying
+                                  ? Theme.of(context).primaryColor
+                                  : null,
+                            ),
+                            subtitleStyle: const TextStyle(fontSize: 12),
+                            trailing: const Icon(Icons.play_circle_outline),
+                            onTap: () {
+                              ref
+                                  .read(playerProvider.notifier)
+                                  .logQueue(_songs, index);
+                            },
+                          );
+                        },
+                        childCount: _songs.length,
+                        addAutomaticKeepAlives: false,
+                      ),
+                    ),
+                    if (_isLoadingMore)
+                      const SliverToBoxAdapter(
+                        child: Padding(
+                          padding: EdgeInsets.all(16),
+                          child: Center(child: CircularProgressIndicator()),
+                        ),
+                      ),
+                    const SliverToBoxAdapter(child: SizedBox(height: 100)),
+                  ],
                 ],
-              ],
+              ),
             ),
-          ),
-          const MiniPlayer(),
-        ],
+            const MiniPlayer(),
+          ],
+        ),
       ),
     );
   }
