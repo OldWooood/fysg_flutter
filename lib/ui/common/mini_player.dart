@@ -89,9 +89,15 @@ class _MiniPlayerState extends ConsumerState<MiniPlayer> {
           color: backgroundColor,
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.1),
-              blurRadius: 10,
-              offset: const Offset(0, -2),
+              color: Colors.black.withValues(alpha: 0.16),
+              blurRadius: 16,
+              spreadRadius: 1,
+              offset: const Offset(0, -4),
+            ),
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.08),
+              blurRadius: 28,
+              offset: const Offset(0, -10),
             ),
           ],
         ),

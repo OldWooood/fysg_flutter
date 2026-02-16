@@ -1,3 +1,4 @@
+import 'dart:math';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:just_audio/just_audio.dart';
 import '../models/song.dart';
@@ -92,8 +93,10 @@ class FysgPlayerState {
 }
 
 class PlayerNotifier extends StateNotifier<FysgPlayerState> {
+  static const int _maxSongLoadRetries = 2;
   final Ref _ref;
   final AudioPlayer _audioPlayer = AudioPlayer();
+  final AudioPlayer _prefetchPlayer = AudioPlayer();
   final ConcatenatingAudioSource _playlist = ConcatenatingAudioSource(
     children: [],
   );
@@ -105,6 +108,9 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
   int _queueBuildToken = 0;
   bool _suppressIndexSync = false;
   ProcessingState _processingState = ProcessingState.idle;
+  final Map<int, int> _songLoadRetryCount = {};
+  int? _lastPrefetchSongId;
+  bool _isPrefetching = false;
 
   PlayerNotifier(this._ref, this._service, this._recentService)
     : super(FysgPlayerState()) {
@@ -115,6 +121,9 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
     // Set the playlist as audio source to enable media controls
     try {
       await _audioPlayer.setAudioSource(_playlist);
+      // Keep initial behavior aligned with default sequence mode.
+      await _audioPlayer.setLoopMode(LoopMode.all);
+      await _audioPlayer.setShuffleModeEnabled(false);
     } catch (e) {
       print('Error initializing audio player: $e');
     }
@@ -129,6 +138,8 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
     _audioPlayer.currentIndexStream.listen((index) {
       if (_suppressIndexSync) return;
       if (index != null && index < state.queue.length && mounted) {
+        _songLoadRetryCount[state.queue[index].id] = 0;
+        _lastPrefetchSongId = null;
         final song = state.queue[index];
         if (state.currentIndex != index) {
           state = state.copyWith(currentIndex: index, currentSong: song);
@@ -143,6 +154,7 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
       if (!mounted || state.position == position) return;
       state = state.copyWith(position: position);
       _syncBackgroundPlayback();
+      _maybePrefetchNext(position);
     });
 
     _audioPlayer.durationStream.listen((duration) {
@@ -158,6 +170,7 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
       },
       onError: (Object e, StackTrace st) {
         print('Playback error: $e');
+        _handleSongLoadFailure('playback_event_error');
       },
     );
   }
@@ -182,11 +195,100 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
       await logQueue([song], 0);
     } catch (e) {
       print("Error playing song (retry $retryCount): $e");
-      if (retryCount < 2) {
+      if (retryCount < _maxSongLoadRetries) {
         await Future.delayed(const Duration(seconds: 1));
         return playSong(song, keepQueue: keepQueue, retryCount: retryCount + 1);
       }
+      _handleSongLoadFailure('play_song_failed');
     }
+  }
+
+  Future<void> _handleSongLoadFailure(String reason) async {
+    final currentSong = state.currentSong;
+    if (currentSong == null) return;
+
+    final retries = (_songLoadRetryCount[currentSong.id] ?? 0) + 1;
+    _songLoadRetryCount[currentSong.id] = retries;
+
+    if (retries <= _maxSongLoadRetries) {
+      print(
+        'Retry loading song ${currentSong.id} ($retries/$_maxSongLoadRetries), reason: $reason',
+      );
+      try {
+        await _audioPlayer.seek(Duration.zero);
+        await _audioPlayer.play();
+        return;
+      } catch (e) {
+        print('Retry failed for song ${currentSong.id}: $e');
+      }
+    }
+
+    print(
+      'Skip song ${currentSong.id} after retries exhausted, reason: $reason',
+    );
+    _songLoadRetryCount[currentSong.id] = 0;
+    next(auto: true);
+  }
+
+  void _maybePrefetchNext(Duration position) {
+    final durationMs = state.duration.inMilliseconds;
+    if (durationMs <= 0) return;
+    if (position.inMilliseconds < durationMs ~/ 2) return;
+    if (state.queue.length < 2) return;
+    if (state.currentIndex < 0 || state.currentIndex >= state.queue.length) {
+      return;
+    }
+
+    final nextIndex = _resolveNextIndexForPrefetch();
+    if (nextIndex == null) return;
+    if (nextIndex < 0 || nextIndex >= state.queue.length) return;
+
+    final nextSong = state.queue[nextIndex];
+    if (_lastPrefetchSongId == nextSong.id) return;
+
+    _lastPrefetchSongId = nextSong.id;
+    _prefetchSong(nextSong);
+  }
+
+  int? _resolveNextIndexForPrefetch() {
+    if (state.queue.isEmpty || state.currentIndex < 0) return null;
+    switch (state.mode) {
+      case PlaybackMode.single:
+        return null;
+      case PlaybackMode.sequence:
+        return (state.currentIndex + 1) % state.queue.length;
+      case PlaybackMode.shuffle:
+        final nextIndex = _audioPlayer.nextIndex;
+        if (nextIndex != null) return nextIndex;
+        if (state.queue.length <= 1) return null;
+        final rand = Random();
+        var candidate = state.currentIndex;
+        while (candidate == state.currentIndex) {
+          candidate = rand.nextInt(state.queue.length);
+        }
+        return candidate;
+    }
+  }
+
+  Future<void> _prefetchSong(Song song) async {
+    if (_isPrefetching) return;
+    _isPrefetching = true;
+    try {
+      final source = await _createAudioSource(song);
+      await _prefetchPlayer.setAudioSource(source, preload: true);
+      await _prefetchPlayer.load();
+    } catch (e) {
+      print('Prefetch failed for song ${song.id}: $e');
+    } finally {
+      _isPrefetching = false;
+    }
+  }
+
+  @override
+  void dispose() {
+    _prefetchPlayer.dispose();
+    _audioPlayer.dispose();
+    super.dispose();
   }
 
   Future<AudioSource> _createAudioSource(Song song) async {
@@ -527,6 +629,16 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
   }
 
   void next({bool auto = false}) {
+    final currentSong = state.currentSong;
+    if (currentSong != null) {
+      _songLoadRetryCount[currentSong.id] = 0;
+    }
+    if (auto && state.mode == PlaybackMode.single && state.queue.length > 1) {
+      final nextIndex = (state.currentIndex + 1) % state.queue.length;
+      _audioPlayer.seek(Duration.zero, index: nextIndex);
+      _audioPlayer.play();
+      return;
+    }
     _audioPlayer.seekToNext();
   }
 

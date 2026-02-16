@@ -167,24 +167,26 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
                 : Container(color: Colors.black),
           ),
 
-          Column(
-            children: [
-              Expanded(
-                child: TabBarView(
-                  controller: _tabController,
-                  children: [
-                    // Cover View
-                    _buildCoverView(context, song),
-                    // Lyrics View
-                    _buildLyricsView(context, lyrics, currentIndex),
-                  ],
+          SafeArea(
+            child: Column(
+              children: [
+                Expanded(
+                  child: TabBarView(
+                    controller: _tabController,
+                    children: [
+                      // Cover View
+                      _buildCoverView(context, song),
+                      // Lyrics View
+                      _buildLyricsView(context, lyrics, currentIndex),
+                    ],
+                  ),
                 ),
-              ),
 
-              // Controls (Always visible at bottom)
-              _buildControls(context, playerState, ref),
-              const SizedBox(height: 40),
-            ],
+                // Controls (Always visible at bottom)
+                _buildControls(context, playerState, ref),
+                const SizedBox(height: 12),
+              ],
+            ),
           ),
         ],
       ),
@@ -292,12 +294,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
         itemPositionsListener: _itemPositionsListener,
         itemCount: lyrics.length,
         // Increased top padding to avoid overlap with AppBar/TabBar
-        padding: EdgeInsets.fromLTRB(
-          20,
-          MediaQuery.of(context).padding.top + kToolbarHeight + 20,
-          20,
-          40,
-        ),
+        padding: EdgeInsets.fromLTRB(20, kToolbarHeight + 20, 20, 40),
         itemBuilder: (context, index) {
           final isCurrent = index == currentIndex;
           return Padding(
