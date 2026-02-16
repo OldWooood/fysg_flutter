@@ -124,6 +124,7 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
   bool _prefetchCacheLoaded = false;
   Set<int> _prefetchCachedIds = {};
   bool _queueStateRestored = false;
+  int? _lastHistorySongId;
 
   PlayerNotifier(
     this._ref,
@@ -151,6 +152,9 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
       _syncBackgroundPlayback();
       if (!mounted || state.isPlaying == playerState.playing) return;
       state = state.copyWith(isPlaying: playerState.playing);
+      if (playerState.playing) {
+        _logHistoryIfNeeded();
+      }
     });
 
     _audioPlayer.currentIndexStream.listen((index) {
@@ -163,8 +167,7 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
           state = state.copyWith(currentIndex: index, currentSong: song);
           _persistPlaybackState();
           _syncBackgroundNowPlaying(song);
-          _recentService.addSong(song);
-          _ref.invalidate(recentSongsProvider);
+          _logHistoryIfNeeded();
         }
       }
     });
@@ -440,6 +443,15 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
       currentSongSnapshot: firstPlayable.song,
       buildToken: buildToken,
     );
+  }
+
+  void _logHistoryIfNeeded() {
+    final song = state.currentSong;
+    if (song == null) return;
+    if (_lastHistorySongId == song.id) return;
+    _lastHistorySongId = song.id;
+    _recentService.addSong(song);
+    _ref.invalidate(recentSongsProvider);
   }
 
   Future<void> restoreCachedQueue() async {
