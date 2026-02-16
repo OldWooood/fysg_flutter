@@ -171,6 +171,8 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
         _handleSongLoadFailure('playback_event_error');
       },
     );
+
+    _downloadService.clearPrefetchOnStartup();
   }
 
   Future<void> playSong(
@@ -244,11 +246,7 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
     final nextSong = state.queue[nextIndex];
     if (_lastPrefetchSongId == nextSong.id) return;
 
-    final previousPrefetchId = _lastPrefetchSongId;
     _lastPrefetchSongId = nextSong.id;
-    if (previousPrefetchId != null && previousPrefetchId != nextSong.id) {
-      _downloadService.deletePrefetch(previousPrefetchId);
-    }
     _prefetchSong(nextSong);
   }
 

@@ -11,6 +11,7 @@ final downloadServiceProvider = Provider((ref) => DownloadService());
 class DownloadService {
   final Dio _dio = Dio();
   static const String _downloadKey = 'downloaded_songs';
+  static const int _prefetchMaxBytes = 4 * 1024 * 1024 * 1024;
   static const Map<String, String> _downloadHeaders = {
     'User-Agent':
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
@@ -27,6 +28,11 @@ class DownloadService {
     return directory.path;
   }
 
+  Future<Directory> _getPrefetchDir() async {
+    final path = await _prefetchPath;
+    return Directory('$path/prefetch');
+  }
+
   Future<File> getLocalFile(int songId) async {
     final path = await _localPath;
     return File('$path/songs/$songId.mp3');
@@ -35,6 +41,11 @@ class DownloadService {
   Future<File> getPrefetchFile(int songId) async {
     final path = await _prefetchPath;
     return File('$path/prefetch/$songId.mp3');
+  }
+
+  Future<File> getPrefetchTempFile(int songId) async {
+    final path = await _prefetchPath;
+    return File('$path/prefetch/$songId.part');
   }
 
   Future<bool> isPrefetched(int songId) async {
@@ -47,18 +58,84 @@ class DownloadService {
     if (file.existsSync()) {
       file.deleteSync();
     }
+    final tempFile = await getPrefetchTempFile(songId);
+    if (tempFile.existsSync()) {
+      tempFile.deleteSync();
+    }
   }
 
   Future<void> prefetchSong(Song song, {Function(int, int)? onProgress}) async {
     if (song.url == null) return;
 
-    final file = await getPrefetchFile(song.id);
-    if (file.existsSync()) return;
-    if (!file.parent.existsSync()) {
-      file.parent.createSync(recursive: true);
+    final finalFile = await getPrefetchFile(song.id);
+    if (finalFile.existsSync()) return;
+    if (!finalFile.parent.existsSync()) {
+      finalFile.parent.createSync(recursive: true);
     }
 
-    await _downloadToFile(song.url!, file.path, onProgress: onProgress);
+    final tempFile = await getPrefetchTempFile(song.id);
+    if (tempFile.existsSync()) {
+      tempFile.deleteSync();
+    }
+
+    try {
+      await _downloadToFile(song.url!, tempFile.path, onProgress: onProgress);
+      if (finalFile.existsSync()) {
+        finalFile.deleteSync();
+      }
+      await tempFile.rename(finalFile.path);
+      await enforcePrefetchLimit();
+    } catch (_) {
+      if (tempFile.existsSync()) {
+        tempFile.deleteSync();
+      }
+      rethrow;
+    }
+  }
+
+  Future<void> clearPrefetchOnStartup() async {
+    final dir = await _getPrefetchDir();
+    if (!dir.existsSync()) return;
+    await dir.delete(recursive: true);
+  }
+
+  Future<void> enforcePrefetchLimit({int maxBytes = _prefetchMaxBytes}) async {
+    final dir = await _getPrefetchDir();
+    if (!dir.existsSync()) return;
+
+    final files = <File>[];
+    await for (final entity in dir.list(followLinks: false)) {
+      if (entity is File && entity.path.endsWith('.mp3')) {
+        files.add(entity);
+      }
+    }
+    if (files.isEmpty) return;
+
+    final stats = <File, FileStat>{};
+    var totalBytes = 0;
+    for (final file in files) {
+      final stat = await file.stat();
+      stats[file] = stat;
+      totalBytes += stat.size;
+    }
+    if (totalBytes <= maxBytes) return;
+
+    files.sort((a, b) {
+      final at = stats[a]?.modified.millisecondsSinceEpoch ?? 0;
+      final bt = stats[b]?.modified.millisecondsSinceEpoch ?? 0;
+      return at.compareTo(bt);
+    });
+
+    for (final file in files) {
+      if (totalBytes <= maxBytes) break;
+      final size = stats[file]?.size ?? 0;
+      try {
+        await file.delete();
+        totalBytes -= size;
+      } catch (_) {
+        // ignore delete failures
+      }
+    }
   }
 
   Future<void> downloadSong(Song song, {Function(int, int)? onProgress}) async {
