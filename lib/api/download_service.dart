@@ -11,6 +11,7 @@ final downloadServiceProvider = Provider((ref) => DownloadService());
 class DownloadService {
   final Dio _dio = Dio();
   static const String _downloadKey = 'downloaded_songs';
+  static const String _prefetchIndexKey = 'prefetch_song_ids';
   static const int _prefetchMaxBytes = 4 * 1024 * 1024 * 1024;
   static const Map<String, String> _downloadHeaders = {
     'User-Agent':
@@ -62,6 +63,7 @@ class DownloadService {
     if (tempFile.existsSync()) {
       tempFile.deleteSync();
     }
+    await _removePrefetchIndex(songId);
   }
 
   Future<void> prefetchSong(Song song, {Function(int, int)? onProgress}) async {
@@ -84,6 +86,7 @@ class DownloadService {
         finalFile.deleteSync();
       }
       await tempFile.rename(finalFile.path);
+      await _addPrefetchIndex(song.id);
       await enforcePrefetchLimit();
     } catch (_) {
       if (tempFile.existsSync()) {
@@ -124,12 +127,42 @@ class DownloadService {
       if (totalBytes <= maxBytes) break;
       final size = stats[file]?.size ?? 0;
       try {
+        final name = file.uri.pathSegments.last;
+        if (name.endsWith('.mp3')) {
+          final idPart = name.substring(0, name.length - 4);
+          final id = int.tryParse(idPart);
+          if (id != null) {
+            await _removePrefetchIndex(id);
+          }
+        }
         await file.delete();
         totalBytes -= size;
       } catch (_) {
         // ignore delete failures
       }
     }
+  }
+
+  Future<Set<int>> listPrefetchedSongIds() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getStringList(_prefetchIndexKey) ?? [];
+    return raw.map(int.tryParse).whereType<int>().toSet();
+  }
+
+  Future<void> _addPrefetchIndex(int songId) async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getStringList(_prefetchIndexKey) ?? [];
+    final exists = raw.any((id) => id == songId.toString());
+    if (exists) return;
+    raw.add(songId.toString());
+    await prefs.setStringList(_prefetchIndexKey, raw);
+  }
+
+  Future<void> _removePrefetchIndex(int songId) async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getStringList(_prefetchIndexKey) ?? [];
+    raw.removeWhere((id) => id == songId.toString());
+    await prefs.setStringList(_prefetchIndexKey, raw);
   }
 
   Future<void> downloadSong(Song song, {Function(int, int)? onProgress}) async {

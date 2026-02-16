@@ -24,6 +24,23 @@ class AppAudioHandler extends BaseAudioHandler with SeekHandler {
     required double speed,
     required ProcessingState processingState,
   }) {
+    if (!isPlaying) {
+      mediaItem.add(null);
+      playbackState.add(
+        PlaybackState(
+          controls: const [],
+          systemActions: const {},
+          androidCompactActionIndices: const [],
+          processingState: AudioProcessingState.idle,
+          playing: false,
+          updatePosition: position,
+          bufferedPosition: bufferedPosition,
+          speed: speed,
+        ),
+      );
+      return;
+    }
+
     playbackState.add(
       PlaybackState(
         controls: const [],
@@ -64,8 +81,8 @@ class AppAudioService {
       config: AudioServiceConfig(
         androidNotificationChannelId: 'com.fysg.flutter.fysg_flutter.audio',
         androidNotificationChannelName: 'Music Playback',
-        androidNotificationOngoing: false,
-        androidStopForegroundOnPause: false,
+        androidNotificationOngoing: true,
+        androidStopForegroundOnPause: true,
       ),
     );
   }

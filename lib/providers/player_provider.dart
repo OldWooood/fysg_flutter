@@ -109,6 +109,8 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
   final Map<int, int> _songLoadRetryCount = {};
   int? _lastPrefetchSongId;
   bool _isPrefetching = false;
+  bool _prefetchCacheLoaded = false;
+  Set<int> _prefetchCachedIds = {};
 
   PlayerNotifier(this._ref, this._service, this._recentService)
     : super(FysgPlayerState()) {
@@ -179,6 +181,7 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
     int retryCount = 0,
   }) async {
     try {
+      await _loadPrefetchCacheIfNeeded();
       // If we are playing from a queue and this song is in the queue, just seek to it
       if (keepQueue && state.queue.isNotEmpty) {
         final index = state.queue.indexWhere((s) => s.id == song.id);
@@ -245,7 +248,11 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
     if (_lastPrefetchSongId == nextSong.id) return;
 
     _lastPrefetchSongId = nextSong.id;
-    _prefetchSong(nextSong);
+    _maybeUsePrefetched(nextSong).then((used) {
+      if (!used) {
+        _prefetchSong(nextSong);
+      }
+    });
   }
 
   int? _resolveNextIndexForPrefetch() {
@@ -266,11 +273,30 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
     try {
       if (await _downloadService.isDownloaded(song.id)) return;
       await _downloadService.prefetchSong(song);
+      _prefetchCachedIds.add(song.id);
     } catch (e) {
       print('Prefetch failed for song ${song.id}: $e');
     } finally {
       _isPrefetching = false;
     }
+  }
+
+  Future<void> _loadPrefetchCacheIfNeeded() async {
+    if (_prefetchCacheLoaded) return;
+    _prefetchCachedIds = await _downloadService.listPrefetchedSongIds();
+    _prefetchCacheLoaded = true;
+  }
+
+  Future<bool> _maybeUsePrefetched(Song song) async {
+    if (!_prefetchCacheLoaded) {
+      await _loadPrefetchCacheIfNeeded();
+    }
+    if (!_prefetchCachedIds.contains(song.id)) return false;
+    if (!await _downloadService.isPrefetched(song.id)) {
+      _prefetchCachedIds.remove(song.id);
+      return false;
+    }
+    return true;
   }
 
   @override
@@ -282,6 +308,7 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
   Future<AudioSource> _createAudioSource(Song song) async {
     final prefetched = await _downloadService.getPrefetchFile(song.id);
     if (prefetched.existsSync()) {
+      _prefetchCachedIds.add(song.id);
       return AudioSource.file(prefetched.path);
     }
 
