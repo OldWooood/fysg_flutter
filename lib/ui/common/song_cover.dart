@@ -43,7 +43,7 @@ class SongCover extends StatelessWidget {
       height: height,
       fit: fit,
       placeholder: (context, _) => _placeholder(context),
-      errorWidget: (context, _, __) => _placeholder(context),
+      errorWidget: (context, _, _) => _placeholder(context),
     );
   }
 

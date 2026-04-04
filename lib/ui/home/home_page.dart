@@ -1,30 +1,34 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'dart:async';
+
+import '../../l10n/app_localizations.dart';
 import '../../models/song.dart';
+import '../../providers/player_provider.dart';
+import '../../api/recently_played_service.dart' show recentSongsProvider;
+import '../../utils/constants.dart';
 import '../common/mini_player.dart';
 import '../common/song_cover.dart';
 import '../common/song_list_tile.dart';
 import '../recent/recently_played_page.dart';
-import '../../providers/player_provider.dart';
-import '../../l10n/app_localizations.dart';
 
 class HomePage extends ConsumerStatefulWidget {
-  const HomePage({Key? key}) : super(key: key);
+  const HomePage({super.key});
 
   @override
   ConsumerState<HomePage> createState() => _HomePageState();
 }
 
 class _HomePageState extends ConsumerState<HomePage> {
-  static const _pageSize = 20;
-  static const _loadMoreTriggerExtent = 600.0;
   final ScrollController _scrollController = ScrollController();
   Timer? _scrollDebounce;
   List<Song> _recommendedSongs = [];
   int _currentPage = 0;
+  bool _isLoading = true;
   bool _isLoadingMore = false;
   bool _hasMore = true;
+  String? _errorMessage;
 
   @override
   void initState() {
@@ -34,48 +38,62 @@ class _HomePageState extends ConsumerState<HomePage> {
   }
 
   Future<void> _fetchInitialData() async {
-    final songs = await ref
+    final result = await ref
         .read(fysgServiceProvider)
         .getRecommendedSongs(page: 0);
+    
     if (!mounted) return;
-    setState(() {
-      _recommendedSongs = songs;
-      _currentPage = 0;
-      _hasMore = songs.length >= _pageSize;
-    });
+    
+    result.when(
+      ok: (songs) {
+        setState(() {
+          _recommendedSongs = songs;
+          _isLoading = false;
+          _hasMore = songs.length >= AppConstants.defaultPageSize;
+        });
+      },
+      err: (error) {
+        setState(() {
+          _isLoading = false;
+          _errorMessage = error.message;
+        });
+      },
+    );
   }
 
   void _onScroll() {
     if (!_scrollController.hasClients || _isLoadingMore || !_hasMore) return;
-    if (_scrollController.position.extentAfter > _loadMoreTriggerExtent) return;
+    if (_scrollController.position.extentAfter > AppConstants.loadMoreTriggerExtent) {
+      return;
+    }
     if (_scrollDebounce?.isActive ?? false) return;
-    _scrollDebounce = Timer(const Duration(milliseconds: 120), _loadMore);
+    _scrollDebounce = Timer(AppConstants.scrollDebounceMs, _loadMore);
   }
 
   Future<void> _loadMore() async {
     if (_isLoadingMore || !_hasMore) return;
-    setState(() {
-      _isLoadingMore = true;
-    });
+    setState(() => _isLoadingMore = true);
 
     final nextPage = _currentPage + 1;
-    try {
-      final songs = await ref
-          .read(fysgServiceProvider)
-          .getRecommendedSongs(page: nextPage);
-      if (!mounted) return;
-      setState(() {
-        _recommendedSongs.addAll(songs);
-        _currentPage = nextPage;
-        _isLoadingMore = false;
-        _hasMore = songs.length >= _pageSize;
-      });
-    } catch (_) {
-      if (!mounted) return;
-      setState(() {
-        _isLoadingMore = false;
-      });
-    }
+    final result = await ref
+        .read(fysgServiceProvider)
+        .getRecommendedSongs(page: nextPage);
+    
+    if (!mounted) return;
+    
+    result.when(
+      ok: (songs) {
+        setState(() {
+          _recommendedSongs.addAll(songs);
+          _currentPage = nextPage;
+          _isLoadingMore = false;
+          _hasMore = songs.length >= AppConstants.defaultPageSize;
+        });
+      },
+      err: (_) {
+        setState(() => _isLoadingMore = false);
+      },
+    );
   }
 
   @override
@@ -92,122 +110,155 @@ class _HomePageState extends ConsumerState<HomePage> {
     return Scaffold(
       body: Column(
         children: [
-            Expanded(
-              child: CustomScrollView(
-                controller: _scrollController,
-                cacheExtent: 800,
-                slivers: [
-                  // Recently Played Section
-                  SliverToBoxAdapter(
-                    child: recentAsync.when(
-                      data: (songs) {
-                        if (songs.isEmpty) return const SizedBox.shrink();
-                        return Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 20.0,
-                                vertical: 10,
-                              ),
-                              child: Row(
-                                mainAxisAlignment:
-                                    MainAxisAlignment.spaceBetween,
-                                children: [
-                                  Text(
-                                    AppLocalizations.of(context).recentlyPlayed,
-                                    style: Theme.of(
-                                      context,
-                                    ).textTheme.headlineSmall,
-                                  ),
-                                  TextButton(
-                                    onPressed: () {
-                                      Navigator.push(
-                                        context,
-                                        MaterialPageRoute(
-                                          builder: (_) =>
-                                              const RecentlyPlayedPage(),
-                                        ),
-                                      );
-                                    },
-                                    child: Text(
-                                      AppLocalizations.of(context).seeAll,
-                                    ),
-                                  ),
-                                ],
-                              ),
+          Expanded(
+            child: CustomScrollView(
+              controller: _scrollController,
+              cacheExtent: 800,
+              slivers: [
+                // Recently Played Section
+                SliverToBoxAdapter(
+                  child: recentAsync.when(
+                    data: (songs) {
+                      if (songs.isEmpty) return const SizedBox.shrink();
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 20,
+                              vertical: 10,
                             ),
-                            SizedBox(
-                              height: 180,
-                              child: ListView.builder(
-                                scrollDirection: Axis.horizontal,
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 20,
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Text(
+                                  AppLocalizations.of(context).recentlyPlayed,
+                                  style: Theme.of(context).textTheme.headlineSmall,
                                 ),
-                                itemCount: songs.length,
-                                itemBuilder: (context, index) {
-                                  final song = songs[index];
-                                  return GestureDetector(
-                                    onTap: () => ref
-                                        .read(playerProvider.notifier)
-                                        .logQueue(songs, index),
-                                    child: Container(
-                                      width: 120,
-                                      margin: const EdgeInsets.only(right: 15),
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          AspectRatio(
-                                            aspectRatio: 1,
-                                            child: ClipRRect(
-                                              borderRadius:
-                                                  BorderRadius.circular(8),
-                                              child: SongCover(
-                                                imageUrl: song.cover,
-                                                fit: BoxFit.cover,
-                                              ),
-                                            ),
-                                          ),
-                                          const SizedBox(height: 5),
-                                          Text(
-                                            song.name,
-                                            maxLines: 2,
-                                            overflow: TextOverflow.ellipsis,
-                                            style: const TextStyle(
-                                              fontWeight: FontWeight.bold,
-                                              fontSize: 13,
-                                            ),
-                                          ),
-                                        ],
+                                TextButton(
+                                  onPressed: () {
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (_) =>
+                                            const RecentlyPlayedPage(),
                                       ),
-                                    ),
-                                  );
-                                },
-                              ),
+                                    );
+                                  },
+                                  child: Text(
+                                    AppLocalizations.of(context).seeAll,
+                                  ),
+                                ),
+                              ],
                             ),
-                          ],
-                        );
-                      },
-                      loading: () => const SizedBox.shrink(),
-                      error: (e, s) => const SizedBox.shrink(),
+                          ),
+                          SizedBox(
+                            height: 180,
+                            child: ListView.builder(
+                              scrollDirection: Axis.horizontal,
+                              padding: const EdgeInsets.symmetric(horizontal: 20),
+                              itemCount: songs.length,
+                              itemBuilder: (context, index) {
+                                final song = songs[index];
+                                return GestureDetector(
+                                  onTap: () => ref
+                                      .read(playerProvider.notifier)
+                                      .logQueue(songs, index),
+                                  child: Container(
+                                    width: 120,
+                                    margin: const EdgeInsets.only(right: 15),
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        AspectRatio(
+                                          aspectRatio: 1,
+                                          child: ClipRRect(
+                                            borderRadius:
+                                                BorderRadius.circular(8),
+                                            child: SongCover(
+                                              imageUrl: song.cover,
+                                              fit: BoxFit.cover,
+                                            ),
+                                          ),
+                                        ),
+                                        const SizedBox(height: 5),
+                                        Text(
+                                          song.name,
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 13,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                          ),
+                        ],
+                      );
+                    },
+                    loading: () => const SizedBox.shrink(),
+                    error: (e, s) => const SizedBox.shrink(),
+                  ),
+                ),
+
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 10,
+                    ),
+                    child: Text(
+                      AppLocalizations.of(context).recommended,
+                      style: Theme.of(context).textTheme.headlineSmall,
                     ),
                   ),
+                ),
 
+                // Error State
+                if (_errorMessage != null)
                   SliverToBoxAdapter(
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 20.0,
-                        vertical: 10,
-                      ),
-                      child: Text(
-                        AppLocalizations.of(context).recommended,
-                        style: Theme.of(context).textTheme.headlineSmall,
+                    child: Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(
+                            Icons.error_outline,
+                            size: 48,
+                            color: Colors.grey,
+                          ),
+                          const SizedBox(height: 16),
+                          Text(_errorMessage!),
+                          const SizedBox(height: 16),
+                          ElevatedButton(
+                            onPressed: () {
+                              setState(() {
+                                _errorMessage = null;
+                                _isLoading = true;
+                              });
+                              _fetchInitialData();
+                            },
+                            child: const Text('重试'),
+                          ),
+                        ],
                       ),
                     ),
-                  ),
-
-                  // Recommended List
+                  )
+                // Loading State
+                else if (_isLoading)
+                  const SliverToBoxAdapter(
+                    child: Padding(
+                      padding: EdgeInsets.all(20),
+                      child: Center(child: CircularProgressIndicator()),
+                    ),
+                  )
+                // Recommended List
+                else
                   SliverList(
                     delegate: SliverChildBuilderDelegate(
                       (context, index) {
@@ -246,12 +297,12 @@ class _HomePageState extends ConsumerState<HomePage> {
                       addAutomaticKeepAlives: false,
                     ),
                   ),
-                ],
-              ),
+              ],
             ),
-            const MiniPlayer(),
-          ],
-        ),
+          ),
+          const MiniPlayer(),
+        ],
+      ),
     );
   }
 }

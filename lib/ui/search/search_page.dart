@@ -1,19 +1,16 @@
 import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../models/song.dart';
+
+import '../../api/search_history_service.dart';
+import '../../l10n/app_localizations.dart';
 import '../../providers/player_provider.dart';
 import '../common/mini_player.dart';
-import '../../l10n/app_localizations.dart';
 import 'search_results_page.dart';
-import '../../api/search_history_service.dart';
-
-// Simple provider for search state
-final searchResultsProvider = StateProvider<List<Song>>((ref) => []);
-final isSearchingProvider = StateProvider<bool>((ref) => false);
 
 class SearchPage extends ConsumerStatefulWidget {
-  const SearchPage({Key? key}) : super(key: key);
+  const SearchPage({super.key});
 
   @override
   ConsumerState<SearchPage> createState() => _SearchPageState();
@@ -24,7 +21,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
   Timer? _debounce;
   List<Map<String, dynamic>> _suggestions = [];
   bool _isLoadingSuggestions = false;
-  
+
   @override
   void initState() {
     super.initState();
@@ -34,7 +31,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
   void _onSearchChanged() {
     final query = _searchController.text;
     if (query.isEmpty) {
-      if (_debounce?.isActive ?? false) _debounce!.cancel();
+      _debounce?.cancel();
       setState(() {
         _suggestions = [];
         _isLoadingSuggestions = false;
@@ -42,27 +39,37 @@ class _SearchPageState extends ConsumerState<SearchPage> {
       return;
     }
 
-    if (_debounce?.isActive ?? false) _debounce!.cancel();
+    _debounce?.cancel();
     _debounce = Timer(const Duration(milliseconds: 300), () async {
       final currentQuery = _searchController.text;
       if (currentQuery.isEmpty) return;
 
       if (mounted) setState(() => _isLoadingSuggestions = true);
       try {
-        final suggestions = await ref.read(fysgServiceProvider).getSearchSuggestions(currentQuery);
-        if (mounted) {
-          setState(() {
-            _suggestions = suggestions;
-            _isLoadingSuggestions = false;
-          });
-        }
+        final result = await ref
+            .read(fysgServiceProvider)
+            .getSearchSuggestions(currentQuery);
+
+        if (!mounted) return;
+
+        result.when(
+          ok: (suggestions) {
+            setState(() {
+              _suggestions = suggestions;
+              _isLoadingSuggestions = false;
+            });
+          },
+          err: (_) {
+            setState(() => _isLoadingSuggestions = false);
+          },
+        );
       } catch (e) {
         if (mounted) setState(() => _isLoadingSuggestions = false);
       }
     });
   }
 
-  void _performSearch(String query) async {
+  Future<void> _performSearch(String query) async {
     if (query.isEmpty) return;
 
     await ref.read(searchHistoryServiceProvider).addQuery(query);
@@ -115,20 +122,21 @@ class _SearchPageState extends ConsumerState<SearchPage> {
                     border: InputBorder.none,
                     isDense: true,
                     contentPadding: const EdgeInsets.symmetric(vertical: 10),
-                    suffixIcon: _searchController.text.isNotEmpty 
-                      ? IconButton(
-                          padding: EdgeInsets.zero,
-                          constraints: const BoxConstraints(),
-                          icon: const Icon(Icons.clear, size: 20),
-                          onPressed: () {
-                            _searchController.clear();
-                            setState(() {});
-                          },
-                        )
-                      : null,
+                    suffixIcon: _searchController.text.isNotEmpty
+                        ? IconButton(
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(),
+                            icon: const Icon(Icons.clear, size: 20),
+                            onPressed: () {
+                              _searchController.clear();
+                              setState(() {});
+                            },
+                          )
+                        : null,
                   ),
-                  onChanged: (v) {
-                    setState(() {}); // Trigger rebuild to switch to suggestions view
+                  onChanged: (_) {
+                    // Trigger rebuild to switch to suggestions view
+                    setState(() {});
                   },
                   onSubmitted: _performSearch,
                 ),
@@ -156,51 +164,60 @@ class _SearchPageState extends ConsumerState<SearchPage> {
                 ? _buildSuggestions()
                 : historyAsync.when(
                     data: (history) {
-                if (history.isEmpty) {
-                  return const Center(
-                    child: Icon(Icons.search, size: 100, color: Colors.grey),
-                  );
-                }
-                return ListView(
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 16, 8, 8),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      if (history.isEmpty) {
+                        return const Center(
+                          child: Icon(Icons.search, size: 100, color: Colors.grey),
+                        );
+                      }
+                      return ListView(
                         children: [
-                          Text(
-                            AppLocalizations.of(context).searchHistory,
-                            style: const TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(16, 16, 8, 8),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Text(
+                                  AppLocalizations.of(context).searchHistory,
+                                  style: const TextStyle(
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                TextButton(
+                                  onPressed: () async {
+                                    await ref
+                                        .read(searchHistoryServiceProvider)
+                                        .clearHistory();
+                                    ref.invalidate(searchHistoryProvider);
+                                  },
+                                  child: Text(
+                                    AppLocalizations.of(context).clearHistory,
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
-                          TextButton(
-                            onPressed: () async {
-                              await ref.read(searchHistoryServiceProvider).clearHistory();
-                              ref.invalidate(searchHistoryProvider);
-                            },
-                            child: Text(AppLocalizations.of(context).clearHistory),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 16),
+                            child: Wrap(
+                              spacing: 8,
+                              children: history
+                                  .map(
+                                    (query) => ActionChip(
+                                      label: Text(query),
+                                      onPressed: () => _performSearch(query),
+                                    ),
+                                  )
+                                  .toList(),
+                            ),
                           ),
                         ],
-                      ),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      child: Wrap(
-                        spacing: 8,
-                        children: history.map((query) => ActionChip(
-                          label: Text(query),
-                          onPressed: () => _performSearch(query),
-                        )).toList(),
-                      ),
-                    ),
-                  ],
-                );
-              },
-              loading: () => const Center(child: CircularProgressIndicator()),
-              error: (e, s) => Center(child: Text('Error: $e')),
-            ),
+                      );
+                    },
+                    loading: () =>
+                        const Center(child: CircularProgressIndicator()),
+                    error: (e, s) => Center(child: Text('Error: $e')),
+                  ),
           ),
           const MiniPlayer(),
         ],
@@ -209,11 +226,16 @@ class _SearchPageState extends ConsumerState<SearchPage> {
   }
 
   Widget _buildSuggestions() {
-    if (_isLoadingSuggestions || (_suggestions.isEmpty && _searchController.text.isNotEmpty && _debounce?.isActive == true)) {
+    if (_isLoadingSuggestions ||
+        (_suggestions.isEmpty &&
+            _searchController.text.isNotEmpty &&
+            _debounce?.isActive == true)) {
       return const Center(child: CircularProgressIndicator());
     }
     if (_suggestions.isEmpty && _searchController.text.isNotEmpty) {
-      return Center(child: Text(AppLocalizations.of(context).noResults));
+      return Center(
+        child: Text(AppLocalizations.of(context).noResults),
+      );
     }
     return ListView.builder(
       itemCount: _suggestions.length,

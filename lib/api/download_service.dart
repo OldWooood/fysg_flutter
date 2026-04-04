@@ -1,27 +1,27 @@
+import 'dart:convert';
 import 'dart:io';
+
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
 import '../models/song.dart';
-import 'dart:convert';
+import '../providers/shared_preferences_provider.dart';
+import '../utils/constants.dart';
 
 final downloadServiceProvider = Provider((ref) {
-  final service = DownloadService();
+  final prefs = ref.watch(sharedPreferencesProvider);
+  final service = DownloadService(prefs);
   ref.onDispose(service.dispose);
   return service;
 });
 
 class DownloadService {
   final Dio _dio = Dio();
-  static const String _downloadKey = 'downloaded_songs';
-  static const String _prefetchIndexKey = 'prefetch_song_ids';
-  static const int _prefetchMaxBytes = 4 * 1024 * 1024 * 1024;
-  static const Map<String, String> _downloadHeaders = {
-    'User-Agent':
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-    'Referer': 'https://www.fysg.org/',
-  };
+  final SharedPreferences _prefs;
+
+  DownloadService(this._prefs);
 
   void dispose() {
     _dio.close(force: true);
@@ -74,7 +74,10 @@ class DownloadService {
     await _removePrefetchIndex(songId);
   }
 
-  Future<void> prefetchSong(Song song, {Function(int, int)? onProgress}) async {
+  Future<void> prefetchSong(
+    Song song, {
+    void Function(int, int)? onProgress,
+  }) async {
     if (song.url == null) return;
 
     final finalFile = await getPrefetchFile(song.id);
@@ -104,7 +107,9 @@ class DownloadService {
     }
   }
 
-  Future<void> enforcePrefetchLimit({int maxBytes = _prefetchMaxBytes}) async {
+  Future<void> enforcePrefetchLimit({
+    int maxBytes = AppConstants.prefetchMaxBytes,
+  }) async {
     final dir = await _getPrefetchDir();
     if (!dir.existsSync()) return;
 
@@ -152,28 +157,28 @@ class DownloadService {
   }
 
   Future<Set<int>> listPrefetchedSongIds() async {
-    final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getStringList(_prefetchIndexKey) ?? [];
+    final raw = _prefs.getStringList(AppConstants.spPrefetchIndexKey) ?? [];
     return raw.map(int.tryParse).whereType<int>().toSet();
   }
 
   Future<void> _addPrefetchIndex(int songId) async {
-    final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getStringList(_prefetchIndexKey) ?? [];
+    final raw = _prefs.getStringList(AppConstants.spPrefetchIndexKey) ?? [];
     final exists = raw.any((id) => id == songId.toString());
     if (exists) return;
     raw.add(songId.toString());
-    await prefs.setStringList(_prefetchIndexKey, raw);
+    await _prefs.setStringList(AppConstants.spPrefetchIndexKey, raw);
   }
 
   Future<void> _removePrefetchIndex(int songId) async {
-    final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getStringList(_prefetchIndexKey) ?? [];
+    final raw = _prefs.getStringList(AppConstants.spPrefetchIndexKey) ?? [];
     raw.removeWhere((id) => id == songId.toString());
-    await prefs.setStringList(_prefetchIndexKey, raw);
+    await _prefs.setStringList(AppConstants.spPrefetchIndexKey, raw);
   }
 
-  Future<void> downloadSong(Song song, {Function(int, int)? onProgress}) async {
+  Future<void> downloadSong(
+    Song song, {
+    void Function(int, int)? onProgress,
+  }) async {
     if (song.url == null) return;
 
     final file = await getLocalFile(song.id);
@@ -190,19 +195,19 @@ class DownloadService {
   Future<void> _downloadToFile(
     String url,
     String path, {
-    Function(int, int)? onProgress,
+    void Function(int, int)? onProgress,
   }) async {
     await _dio.download(
       url,
       path,
       onReceiveProgress: onProgress,
-      options: Options(headers: _downloadHeaders),
+      options: Options(headers: AppConstants.defaultHeaders),
     );
   }
 
   Future<void> _saveToManifest(Song song) async {
-    final prefs = await SharedPreferences.getInstance();
-    final List<String> downloaded = prefs.getStringList(_downloadKey) ?? [];
+    final List<String> downloaded =
+        _prefs.getStringList(AppConstants.spDownloadedSongs) ?? [];
 
     final exists = downloaded.any((item) {
       final map = json.decode(item) as Map<String, dynamic>;
@@ -211,16 +216,16 @@ class DownloadService {
 
     if (!exists) {
       downloaded.add(json.encode(song.toJson()));
-      await prefs.setStringList(_downloadKey, downloaded);
+      await _prefs.setStringList(AppConstants.spDownloadedSongs, downloaded);
     }
   }
 
   Future<List<Song>> getDownloadedSongs() async {
-    final prefs = await SharedPreferences.getInstance();
-    final List<String> downloaded = prefs.getStringList(_downloadKey) ?? [];
+    final List<String> downloaded =
+        _prefs.getStringList(AppConstants.spDownloadedSongs) ?? [];
 
-    List<Song> songs = [];
-    List<String> validFiles = [];
+    final songs = <Song>[];
+    final validFiles = <String>[];
 
     // Verify files still exist
     for (final item in downloaded) {
@@ -234,7 +239,7 @@ class DownloadService {
     }
 
     if (validFiles.length != downloaded.length) {
-      await prefs.setStringList(_downloadKey, validFiles);
+      await _prefs.setStringList(AppConstants.spDownloadedSongs, validFiles);
     }
 
     return songs;
@@ -251,12 +256,12 @@ class DownloadService {
       file.deleteSync();
     }
 
-    final prefs = await SharedPreferences.getInstance();
-    final List<String> downloaded = prefs.getStringList(_downloadKey) ?? [];
+    final List<String> downloaded =
+        _prefs.getStringList(AppConstants.spDownloadedSongs) ?? [];
     downloaded.removeWhere((item) {
       final map = json.decode(item) as Map<String, dynamic>;
       return map['id'] == songId;
     });
-    await prefs.setStringList(_downloadKey, downloaded);
+    await _prefs.setStringList(AppConstants.spDownloadedSongs, downloaded);
   }
 }

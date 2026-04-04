@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../api/recently_played_service.dart' show recentSongsProvider;
 import '../../providers/player_provider.dart';
 import '../common/mini_player.dart';
 import '../common/song_list_tile.dart';

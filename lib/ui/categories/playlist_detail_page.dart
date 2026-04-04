@@ -1,15 +1,18 @@
+import 'dart:async';
+
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:cached_network_image/cached_network_image.dart';
-import 'dart:async';
+
+import '../../api/favorite_playlist_service.dart';
+import '../../api/image_cache_service.dart';
+import '../../l10n/app_localizations.dart';
 import '../../models/playlist.dart';
 import '../../models/song.dart';
 import '../../providers/player_provider.dart';
-import '../../api/image_cache_service.dart';
-import '../../api/favorite_playlist_service.dart';
+import '../../utils/constants.dart';
 import '../common/mini_player.dart';
 import '../common/song_list_tile.dart';
-import '../../l10n/app_localizations.dart';
 
 class PlaylistDetailPage extends ConsumerStatefulWidget {
   final Playlist playlist;
@@ -21,8 +24,6 @@ class PlaylistDetailPage extends ConsumerStatefulWidget {
 }
 
 class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
-  static const _pageSize = 20;
-  static const _loadMoreTriggerExtent = 600.0;
   final ScrollController _scrollController = ScrollController();
   Timer? _scrollDebounce;
   List<Song> _songs = [];
@@ -30,6 +31,7 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
   bool _isLoading = true;
   bool _isLoadingMore = false;
   bool _hasMore = true;
+  String? _errorMessage;
 
   @override
   void initState() {
@@ -40,66 +42,69 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
 
   void _onScroll() {
     if (!_scrollController.hasClients || _isLoadingMore || !_hasMore) return;
-    if (_scrollController.position.extentAfter > _loadMoreTriggerExtent) return;
+    if (_scrollController.position.extentAfter > AppConstants.loadMoreTriggerExtent) {
+      return;
+    }
     if (_scrollDebounce?.isActive ?? false) return;
-    _scrollDebounce = Timer(const Duration(milliseconds: 120), _loadMore);
+    _scrollDebounce = Timer(AppConstants.scrollDebounceMs, _loadMore);
   }
 
   Future<void> _fetchInitialSongs() async {
     final service = ref.read(fysgServiceProvider);
-    try {
-      final songs = await service.getCollectionSongs(
-        widget.playlist.type,
-        widget.playlist.id,
-        page: 0,
-      );
-      if (mounted) {
+    final result = await service.getCollectionSongs(
+      widget.playlist.type,
+      widget.playlist.id,
+      page: 0,
+    );
+    
+    if (!mounted) return;
+    
+    result.when(
+      ok: (songs) {
         setState(() {
           _songs = songs;
           _isLoading = false;
-          _hasMore = songs.length >= _pageSize;
+          _hasMore = songs.length >= AppConstants.defaultPageSize;
         });
-      }
-    } catch (e) {
-      if (mounted) {
+      },
+      err: (error) {
         setState(() {
           _isLoading = false;
+          _errorMessage = error.message;
         });
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Error loading songs: $e')));
-      }
-    }
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error loading songs: ${error.message}')),
+        );
+      },
+    );
   }
 
   Future<void> _loadMore() async {
-    setState(() {
-      _isLoadingMore = true;
-    });
+    setState(() => _isLoadingMore = true);
 
     final service = ref.read(fysgServiceProvider);
     final nextPage = _currentPage + 1;
-    try {
-      final songs = await service.getCollectionSongs(
-        widget.playlist.type,
-        widget.playlist.id,
-        page: nextPage,
-      );
-      if (mounted) {
+    final result = await service.getCollectionSongs(
+      widget.playlist.type,
+      widget.playlist.id,
+      page: nextPage,
+    );
+    
+    if (!mounted) return;
+    
+    result.when(
+      ok: (songs) {
         setState(() {
           _songs.addAll(songs);
           _currentPage = nextPage;
           _isLoadingMore = false;
-          _hasMore = songs.length >= _pageSize;
+          _hasMore = songs.length >= AppConstants.defaultPageSize;
         });
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _isLoadingMore = false;
-        });
-      }
-    }
+      },
+      err: (_) {
+        setState(() => _isLoadingMore = false);
+      },
+    );
   }
 
   @override
@@ -143,7 +148,9 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
                               httpHeaders: ImageCacheService.headers,
                               fit: BoxFit.cover,
                             )
-                          : Container(color: Theme.of(context).primaryColor),
+                          : ColoredBox(
+                              color: Theme.of(context).primaryColor,
+                            ),
                     ),
                     actions: [
                       favoriteAsync.when(
@@ -173,14 +180,42 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
                           );
                         },
                         loading: () => const SizedBox.shrink(),
-                        error: (_, __) => const SizedBox.shrink(),
+                        error: (_, _) => const SizedBox.shrink(),
                       ),
                     ],
                   ),
-                  if (!_isLoading && _songs.isNotEmpty)
+                  if (_errorMessage != null)
+                    SliverFillRemaining(
+                      child: Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(
+                              Icons.error_outline,
+                              size: 48,
+                              color: Colors.grey,
+                            ),
+                            const SizedBox(height: 16),
+                            Text(_errorMessage!),
+                            const SizedBox(height: 16),
+                            ElevatedButton(
+                              onPressed: () {
+                                setState(() {
+                                  _errorMessage = null;
+                                  _isLoading = true;
+                                });
+                                _fetchInitialSongs();
+                              },
+                              child: const Text('重试'),
+                            ),
+                          ],
+                        ),
+                      ),
+                    )
+                  else if (!_isLoading && _songs.isNotEmpty)
                     SliverToBoxAdapter(
                       child: Padding(
-                        padding: const EdgeInsets.all(16.0),
+                        padding: const EdgeInsets.all(16),
                         child: ElevatedButton.icon(
                           onPressed: () {
                             ref

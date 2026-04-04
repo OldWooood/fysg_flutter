@@ -1,15 +1,17 @@
-import 'package:flutter/foundation.dart';
+import 'dart:async';
+
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
-import 'dart:async';
+
+import '../../api/image_cache_service.dart';
+import '../../l10n/app_localizations.dart';
 import '../../models/playlist.dart';
 import '../../providers/player_provider.dart';
-import '../../api/image_cache_service.dart';
+import '../../utils/constants.dart';
 import '../common/mini_player.dart';
 import 'playlist_detail_page.dart';
-import '../../l10n/app_localizations.dart';
 
 class CategoriesPage extends ConsumerStatefulWidget {
   const CategoriesPage({super.key});
@@ -20,7 +22,7 @@ class CategoriesPage extends ConsumerStatefulWidget {
 
 class _CategoriesPageState extends ConsumerState<CategoriesPage>
     with SingleTickerProviderStateMixin {
-  late TabController _tabController;
+  late final TabController _tabController;
 
   @override
   void initState() {
@@ -56,7 +58,7 @@ class _CategoriesPageState extends ConsumerState<CategoriesPage>
           Expanded(
             child: TabBarView(
               controller: _tabController,
-              children: [
+              children: const [
                 _CategoryGrid(type: 'album'),
                 _CategoryGrid(type: 'playlist'),
               ],
@@ -78,8 +80,6 @@ class _CategoryGrid extends ConsumerStatefulWidget {
 }
 
 class _CategoryGridState extends ConsumerState<_CategoryGrid> {
-  static const _pageSize = 20;
-  static const _loadMoreTriggerExtent = 600.0;
   final ScrollController _scrollController = ScrollController();
   Timer? _scrollDebounce;
   List<Playlist> _items = [];
@@ -87,6 +87,7 @@ class _CategoryGridState extends ConsumerState<_CategoryGrid> {
   bool _isLoading = true;
   bool _isLoadingMore = false;
   bool _hasMore = true;
+  String? _errorMessage;
 
   @override
   void initState() {
@@ -95,63 +96,60 @@ class _CategoryGridState extends ConsumerState<_CategoryGrid> {
     _scrollController.addListener(_onScroll);
   }
 
-  Future<List<Playlist>> _fetchByType(int page) {
+  Future<void> _fetchByType(int page) async {
     final service = ref.read(fysgServiceProvider);
-    switch (widget.type) {
-      case 'album':
-        return service.getAlbums(page: page);
-      case 'playlist':
-        return service.getPlaylists(page: page);
-      default:
-        return Future.value(const <Playlist>[]);
-    }
+    final result = switch (widget.type) {
+      'album' => await service.getAlbums(page: page),
+      'playlist' => await service.getPlaylists(page: page),
+      _ => throw UnsupportedError('Unknown type: ${widget.type}'),
+    };
+    
+    if (!mounted) return;
+    
+    result.when(
+      ok: (items) {
+        setState(() {
+          if (page == 0) {
+            _items = items;
+            _isLoading = false;
+          } else {
+            _items.addAll(items);
+            _currentPage = page;
+            _isLoadingMore = false;
+          }
+          _hasMore = items.length >= AppConstants.defaultPageSize;
+        });
+      },
+      err: (error) {
+        setState(() {
+          _errorMessage = error.message;
+          _isLoading = false;
+          _isLoadingMore = false;
+        });
+        if (page == 0) {
+          debugPrint('Error fetching ${widget.type}: $error');
+        }
+      },
+    );
   }
 
   Future<void> _fetchInitialData() async {
-    List<Playlist> items = [];
-    try {
-      items = await _fetchByType(0);
-    } catch (e) {
-      debugPrint('Error fetching ${widget.type}: $e');
-    }
-
-    if (!mounted) return;
-    setState(() {
-      _items = items;
-      _isLoading = false;
-      _hasMore = items.length >= _pageSize;
-    });
+    await _fetchByType(0);
   }
 
   void _onScroll() {
     if (!_scrollController.hasClients || _isLoadingMore || !_hasMore) return;
-    if (_scrollController.position.extentAfter > _loadMoreTriggerExtent) return;
+    if (_scrollController.position.extentAfter > AppConstants.loadMoreTriggerExtent) {
+      return;
+    }
     if (_scrollDebounce?.isActive ?? false) return;
-    _scrollDebounce = Timer(const Duration(milliseconds: 120), _loadMore);
+    _scrollDebounce = Timer(AppConstants.scrollDebounceMs, _loadMore);
   }
 
   Future<void> _loadMore() async {
     if (_isLoadingMore) return;
-    setState(() {
-      _isLoadingMore = true;
-    });
-
-    final nextPage = _currentPage + 1;
-    List<Playlist> items = [];
-
-    try {
-      items = await _fetchByType(nextPage);
-    } catch (e) {
-      debugPrint('Error loading more ${widget.type}: $e');
-    }
-
-    if (!mounted) return;
-    setState(() {
-      _items.addAll(items);
-      _currentPage = nextPage;
-      _isLoadingMore = false;
-      _hasMore = items.length >= _pageSize;
-    });
+    setState(() => _isLoadingMore = true);
+    await _fetchByType(_currentPage + 1);
   }
 
   @override
@@ -164,6 +162,30 @@ class _CategoryGridState extends ConsumerState<_CategoryGrid> {
   @override
   Widget build(BuildContext context) {
     if (_isLoading) return const Center(child: CircularProgressIndicator());
+    
+    if (_errorMessage != null) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.error_outline, size: 48, color: Colors.grey),
+            const SizedBox(height: 16),
+            Text(_errorMessage!),
+            const SizedBox(height: 16),
+            ElevatedButton(
+              onPressed: () {
+                setState(() {
+                  _errorMessage = null;
+                  _isLoading = true;
+                });
+                _fetchInitialData();
+              },
+              child: const Text('重试'),
+            ),
+          ],
+        ),
+      );
+    }
 
     return MasonryGridView.count(
       controller: _scrollController,
@@ -193,7 +215,7 @@ class _CategoryGridState extends ConsumerState<_CategoryGrid> {
               borderRadius: BorderRadius.circular(12),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withOpacity(0.05),
+                  color: Colors.black.withValues(alpha: 0.05),
                   blurRadius: 10,
                   offset: const Offset(0, 4),
                 ),
@@ -230,7 +252,7 @@ class _CategoryGridState extends ConsumerState<_CategoryGrid> {
                   ),
                 ),
                 Padding(
-                  padding: const EdgeInsets.all(12.0),
+                  padding: const EdgeInsets.all(12),
                   child: Text(
                     item.name,
                     style: const TextStyle(

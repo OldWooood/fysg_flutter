@@ -1,26 +1,23 @@
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:just_audio/just_audio.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'dart:convert';
-import '../models/song.dart';
-import '../api/fysg_service.dart';
-import '../api/recently_played_service.dart';
+
+
 import '../api/download_service.dart';
+import '../api/fysg_service.dart';
+import '../api/recently_played_service.dart' show recentlyPlayedServiceProvider, recentSongsProvider, RecentlyPlayedService;
 import '../audio/app_audio_handler.dart';
+import '../models/song.dart';
+import '../utils/constants.dart';
+import 'shared_preferences_provider.dart';
 
 final fysgServiceProvider = Provider((ref) {
   final service = FysgService();
   ref.onDispose(service.dispose);
   return service;
-});
-
-final recentlyPlayedServiceProvider = Provider(
-  (ref) => RecentlyPlayedService(),
-);
-
-final recentSongsProvider = FutureProvider<List<Song>>((ref) async {
-  return ref.watch(recentlyPlayedServiceProvider).getRecentSongs();
 });
 
 final playerMiniStateProvider = Provider<({Song? currentSong, bool isPlaying})>(
@@ -68,7 +65,7 @@ class FysgPlayerState {
   final int currentIndex;
   final PlaybackMode mode;
 
-  FysgPlayerState({
+  const FysgPlayerState({
     this.isPlaying = false,
     this.currentSong,
     this.position = Duration.zero,
@@ -100,11 +97,6 @@ class FysgPlayerState {
 }
 
 class PlayerNotifier extends StateNotifier<FysgPlayerState> {
-  static const int _maxSongLoadRetries = 2;
-  static const String _queueCacheKey = 'player_queue_cache';
-  static const String _queueIndexKey = 'player_queue_index';
-  static const String _queueSongIdKey = 'player_queue_song_id';
-  static const String _queuePositionKey = 'player_queue_position_ms';
   final Ref _ref;
   final AudioPlayer _audioPlayer = AudioPlayer();
   final ConcatenatingAudioSource _playlist = ConcatenatingAudioSource(
@@ -126,15 +118,20 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
   bool _queueStateRestored = false;
   int? _lastHistorySongId;
 
+  // Stream 订阅管理，防止内存泄漏
+  final List<StreamSubscription> _subscriptions = [];
+  bool _isDisposed = false;
+
   PlayerNotifier(
     this._ref,
     this._service,
     this._downloadService,
     this._recentService,
-  )
-    : super(FysgPlayerState()) {
+  ) : super(const FysgPlayerState()) {
     _init();
   }
+
+  bool get _mounted => !_isDisposed;
 
   Future<void> _init() async {
     // Set the playlist as audio source to enable media controls
@@ -147,53 +144,84 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
       debugPrint('Error initializing audio player: $e');
     }
 
-    _audioPlayer.playerStateStream.listen((playerState) {
-      _processingState = playerState.processingState;
-      _syncBackgroundPlayback();
-      if (!mounted || state.isPlaying == playerState.playing) return;
-      state = state.copyWith(isPlaying: playerState.playing);
-      if (playerState.playing) {
-        _logHistoryIfNeeded();
-      }
-    });
+    // 使用订阅列表管理所有 Stream 订阅
+    _subscriptions.add(
+      _audioPlayer.playerStateStream.listen(
+        (playerState) {
+          _processingState = playerState.processingState;
+          _syncBackgroundPlayback();
+          if (!_mounted || state.isPlaying == playerState.playing) return;
+          state = state.copyWith(isPlaying: playerState.playing);
+          if (playerState.playing) {
+            _logHistoryIfNeeded();
+          }
+        },
+        onError: (Object e, StackTrace st) {
+          debugPrint('PlayerStateStream error: $e');
+        },
+      ),
+    );
 
-    _audioPlayer.currentIndexStream.listen((index) {
-      if (_suppressIndexSync) return;
-      if (index != null && index < state.queue.length && mounted) {
-        _songLoadRetryCount[state.queue[index].id] = 0;
-        _lastPrefetchSongId = null;
-        final song = state.queue[index];
-        if (state.currentIndex != index) {
-          state = state.copyWith(currentIndex: index, currentSong: song);
-          _persistPlaybackState();
-          _syncBackgroundNowPlaying(song);
-          _logHistoryIfNeeded();
-        }
-      }
-    });
+    _subscriptions.add(
+      _audioPlayer.currentIndexStream.listen(
+        (index) {
+          if (_suppressIndexSync) return;
+          if (index != null && index < state.queue.length && _mounted) {
+            _songLoadRetryCount[state.queue[index].id] = 0;
+            _lastPrefetchSongId = null;
+            final song = state.queue[index];
+            if (state.currentIndex != index) {
+              state = state.copyWith(currentIndex: index, currentSong: song);
+              _persistPlaybackState();
+              _syncBackgroundNowPlaying(song);
+              _logHistoryIfNeeded();
+            }
+          }
+        },
+        onError: (Object e, StackTrace st) {
+          debugPrint('CurrentIndexStream error: $e');
+        },
+      ),
+    );
 
-    _audioPlayer.positionStream.listen((position) {
-      if (!mounted || state.position == position) return;
-      state = state.copyWith(position: position);
-      _syncBackgroundPlayback();
-      _maybePrefetchNext(position);
-    });
+    _subscriptions.add(
+      _audioPlayer.positionStream.listen(
+        (position) {
+          if (!_mounted || state.position == position) return;
+          state = state.copyWith(position: position);
+          _syncBackgroundPlayback();
+          _maybePrefetchNext(position);
+        },
+        onError: (Object e, StackTrace st) {
+          debugPrint('PositionStream error: $e');
+        },
+      ),
+    );
 
-    _audioPlayer.durationStream.listen((duration) {
-      final nextDuration = duration ?? Duration.zero;
-      if (!mounted || state.duration == nextDuration) return;
-      state = state.copyWith(duration: nextDuration);
-      _syncBackgroundPlayback();
-    });
+    _subscriptions.add(
+      _audioPlayer.durationStream.listen(
+        (duration) {
+          final nextDuration = duration ?? Duration.zero;
+          if (!_mounted || state.duration == nextDuration) return;
+          state = state.copyWith(duration: nextDuration);
+          _syncBackgroundPlayback();
+        },
+        onError: (Object e, StackTrace st) {
+          debugPrint('DurationStream error: $e');
+        },
+      ),
+    );
 
-    _audioPlayer.playbackEventStream.listen(
-      (event) {
-        // Log playback events for debugging stalls
-      },
-      onError: (Object e, StackTrace st) {
-        debugPrint('Playback error: $e');
-        _handleSongLoadFailure('playback_event_error');
-      },
+    _subscriptions.add(
+      _audioPlayer.playbackEventStream.listen(
+        (event) {
+          // Log playback events for debugging stalls
+        },
+        onError: (Object e, StackTrace st) {
+          debugPrint('Playback error: $e');
+          _handleSongLoadFailure('playback_event_error');
+        },
+      ),
     );
 
     await _restoreQueueState();
@@ -220,7 +248,7 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
       await logQueue([song], 0);
     } catch (e) {
       debugPrint("Error playing song (retry $retryCount): $e");
-      if (retryCount < _maxSongLoadRetries) {
+      if (retryCount < AppConstants.maxSongLoadRetries) {
         await Future.delayed(const Duration(seconds: 1));
         return playSong(song, keepQueue: keepQueue, retryCount: retryCount + 1);
       }
@@ -235,9 +263,9 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
     final retries = (_songLoadRetryCount[currentSong.id] ?? 0) + 1;
     _songLoadRetryCount[currentSong.id] = retries;
 
-    if (retries <= _maxSongLoadRetries) {
+    if (retries <= AppConstants.maxSongLoadRetries) {
       debugPrint(
-        'Retry loading song ${currentSong.id} ($retries/$_maxSongLoadRetries), reason: $reason',
+        'Retry loading song ${currentSong.id} ($retries/${AppConstants.maxSongLoadRetries}), reason: $reason',
       );
       try {
         await _audioPlayer.seek(Duration.zero);
@@ -325,6 +353,12 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
 
   @override
   void dispose() {
+    _isDisposed = true;
+    // 取消所有 Stream 订阅
+    for (final subscription in _subscriptions) {
+      subscription.cancel();
+    }
+    _subscriptions.clear();
     _audioPlayer.dispose();
     super.dispose();
   }
@@ -347,13 +381,10 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
       throw Exception('Missing audio url for song ${song.id}');
     }
 
-    final headers = {
-      'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-      'Referer': 'https://www.fysg.org/',
-    };
-
-    return AudioSource.uri(Uri.parse(url), headers: headers);
+    return AudioSource.uri(
+      Uri.parse(url),
+      headers: AppConstants.defaultHeaders,
+    );
   }
 
   Future<DownloadResult?> downloadCurrentSong() async {
@@ -369,10 +400,10 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
       _downloadService
           .downloadSong(song)
           .then((_) {
-        debugPrint('Downloaded ${song.name}');
+            debugPrint('Downloaded ${song.name}');
           })
           .catchError((e) {
-        debugPrint('Download error: $e');
+            debugPrint('Download error: $e');
           });
 
       return DownloadResult.started;
@@ -388,7 +419,7 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
 
     final buildToken = ++_queueBuildToken;
     final preferred = await _buildPlayableEntry(songs[index]);
-    if (!mounted || buildToken != _queueBuildToken) return;
+    if (!_mounted || buildToken != _queueBuildToken) return;
     var firstPlayable = preferred;
     var chosenOriginalIndex = index;
     if (firstPlayable == null) {
@@ -396,7 +427,7 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
         final originalIndex = (index + offset) % songs.length;
         final song = songs[originalIndex];
         firstPlayable = await _buildPlayableEntry(song);
-        if (!mounted || buildToken != _queueBuildToken) return;
+        if (!_mounted || buildToken != _queueBuildToken) return;
         if (firstPlayable != null) {
           chosenOriginalIndex = originalIndex;
           break;
@@ -412,8 +443,8 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
     final displayQueue = List<Song>.from(songs);
     final safeDisplayIndex =
         (chosenOriginalIndex >= 0 && chosenOriginalIndex < displayQueue.length)
-        ? chosenOriginalIndex
-        : index;
+            ? chosenOriginalIndex
+            : index;
 
     // Show full list immediately; keep index stream from remapping to stale index 0.
     state = state.copyWith(
@@ -434,7 +465,7 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
       preload: true,
     );
 
-    if (!mounted || buildToken != _queueBuildToken) return;
+    if (!_mounted || buildToken != _queueBuildToken) return;
     await _audioPlayer.seek(Duration.zero, index: 0);
     _audioPlayer.play();
 
@@ -461,8 +492,10 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
   Future<void> _restoreQueueState() async {
     if (_queueStateRestored) return;
     _queueStateRestored = true;
-    final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getStringList(_queueCacheKey);
+    
+    // 使用通过 Riverpod 注入的 SharedPreferences 实例
+    final prefs = _ref.read(sharedPreferencesProvider);
+    final raw = prefs.getStringList(AppConstants.spQueueCacheKey);
     if (raw == null || raw.isEmpty) return;
 
     final cachedSongs = <Song>[];
@@ -476,9 +509,9 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
     }
     if (cachedSongs.isEmpty) return;
 
-    final savedIndex = prefs.getInt(_queueIndexKey) ?? 0;
-    final savedId = prefs.getInt(_queueSongIdKey);
-    final savedPositionMs = prefs.getInt(_queuePositionKey) ?? 0;
+    final savedIndex = prefs.getInt(AppConstants.spQueueIndexKey) ?? 0;
+    final savedId = prefs.getInt(AppConstants.spQueueSongIdKey);
+    final savedPositionMs = prefs.getInt(AppConstants.spQueuePositionKey) ?? 0;
     var index = savedIndex.clamp(0, cachedSongs.length - 1);
     if (savedId != null) {
       final byId = cachedSongs.indexWhere((s) => s.id == savedId);
@@ -513,21 +546,24 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
   Future<void> _persistQueueCache() async {
     final queue = state.queue;
     if (queue.isEmpty || state.currentIndex < 0) return;
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = _ref.read(sharedPreferencesProvider);
     final encoded = queue.map((s) => json.encode(s.toJson())).toList();
-    await prefs.setStringList(_queueCacheKey, encoded);
+    await prefs.setStringList(AppConstants.spQueueCacheKey, encoded);
   }
 
   Future<void> _persistPlaybackState({bool includePosition = false}) async {
     final queue = state.queue;
     if (queue.isEmpty || state.currentIndex < 0) return;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt(_queueIndexKey, state.currentIndex);
+    final prefs = _ref.read(sharedPreferencesProvider);
+    await prefs.setInt(AppConstants.spQueueIndexKey, state.currentIndex);
     if (includePosition) {
-      await prefs.setInt(_queuePositionKey, state.position.inMilliseconds);
+      await prefs.setInt(
+        AppConstants.spQueuePositionKey,
+        state.position.inMilliseconds,
+      );
     }
     if (state.currentSong != null) {
-      await prefs.setInt(_queueSongIdKey, state.currentSong!.id);
+      await prefs.setInt(AppConstants.spQueueSongIdKey, state.currentSong!.id);
     }
   }
 
@@ -546,7 +582,7 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
       sources.add(entry.source);
     }
 
-    if (!mounted || buildToken != _queueBuildToken || playableSongs.isEmpty) {
+    if (!_mounted || buildToken != _queueBuildToken || playableSongs.isEmpty) {
       if (buildToken == _queueBuildToken) {
         _suppressIndexSync = false;
       }
@@ -575,7 +611,7 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
       preload: true,
     );
 
-    if (!mounted || buildToken != _queueBuildToken) return;
+    if (!_mounted || buildToken != _queueBuildToken) return;
 
     state = state.copyWith(
       queue: playableSongs,
@@ -599,16 +635,19 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
       return (song: resolvedSong, source: source);
     } catch (_) {
       if (resolvedSong.id == 0) return null;
-      try {
-        final details = await _service.getSongDetails(resolvedSong.id);
-        _songDetailsCache[resolvedSong.id] = details;
-        resolvedSong = _mergeSong(resolvedSong, details);
-        final source = await _createAudioSource(resolvedSong);
-        return (song: resolvedSong, source: source);
-      } catch (e) {
-        debugPrint('Skip unplayable song ${song.id}: $e');
-        return null;
-      }
+      final result = await _service.getSongDetails(resolvedSong.id);
+      return result.when(
+        ok: (details) async {
+          _songDetailsCache[resolvedSong.id] = details;
+          resolvedSong = _mergeSong(resolvedSong, details);
+          final source = await _createAudioSource(resolvedSong);
+          return (song: resolvedSong, source: source);
+        },
+        err: (error) {
+          debugPrint('Skip unplayable song ${song.id}: ${error.message}');
+          return null;
+        },
+      );
     }
   }
 
@@ -641,15 +680,17 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
 
     if (_songDetailsLoading.contains(songId)) return;
     _songDetailsLoading.add(songId);
-    try {
-      final details = await _service.getSongDetails(songId);
-      _songDetailsCache[songId] = details;
-      _mergeSongDetailsIntoState(details);
-    } catch (e) {
-      debugPrint('Failed to load song details for $songId: $e');
-    } finally {
-      _songDetailsLoading.remove(songId);
-    }
+    final result = await _service.getSongDetails(songId);
+    result.when(
+      ok: (details) {
+        _songDetailsCache[songId] = details;
+        _mergeSongDetailsIntoState(details);
+      },
+      err: (error) {
+        debugPrint('Failed to load song details for $songId: ${error.message}');
+      },
+    );
+    _songDetailsLoading.remove(songId);
   }
 
   void _mergeSongDetailsIntoState(Song detailedSong) {

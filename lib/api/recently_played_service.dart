@@ -1,14 +1,30 @@
 import 'dart:convert';
+
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
 import '../models/song.dart';
+import '../providers/shared_preferences_provider.dart';
+import '../utils/constants.dart';
+
+final recentlyPlayedServiceProvider = Provider((ref) {
+  final prefs = ref.watch(sharedPreferencesProvider);
+  return RecentlyPlayedService(prefs);
+});
+
+final recentSongsProvider = FutureProvider<List<Song>>((ref) async {
+  return ref.watch(recentlyPlayedServiceProvider).getRecentSongs();
+});
 
 class RecentlyPlayedService {
-  static const String _key = 'recent_songs';
   static const int _maxSongs = 500;
+  final SharedPreferences _prefs;
+
+  RecentlyPlayedService(this._prefs);
 
   Future<void> addSong(Song song) async {
-    final prefs = await SharedPreferences.getInstance();
-    List<String> songsJson = prefs.getStringList(_key) ?? [];
+    List<String> songsJson =
+        _prefs.getStringList(AppConstants.spRecentSongs) ?? [];
 
     // Remove if existing (to move to top)
     songsJson.removeWhere((item) {
@@ -28,12 +44,12 @@ class RecentlyPlayedService {
       songsJson = songsJson.sublist(0, _maxSongs);
     }
 
-    await prefs.setStringList(_key, songsJson);
+    await _prefs.setStringList(AppConstants.spRecentSongs, songsJson);
   }
 
   Future<List<Song>> getRecentSongs() async {
-    final prefs = await SharedPreferences.getInstance();
-    final List<String> songsJson = prefs.getStringList(_key) ?? [];
+    final List<String> songsJson =
+        _prefs.getStringList(AppConstants.spRecentSongs) ?? [];
 
     return songsJson
         .map((item) {

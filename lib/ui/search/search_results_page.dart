@@ -1,24 +1,25 @@
 import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../../api/search_history_service.dart';
+import '../../l10n/app_localizations.dart';
 import '../../models/song.dart';
 import '../../providers/player_provider.dart';
+import '../../utils/constants.dart';
 import '../common/mini_player.dart';
 import '../common/song_list_tile.dart';
-import '../../l10n/app_localizations.dart';
-import '../../api/search_history_service.dart';
 
 class SearchResultsPage extends ConsumerStatefulWidget {
   final String query;
-  const SearchResultsPage({Key? key, required this.query}) : super(key: key);
+  const SearchResultsPage({super.key, required this.query});
 
   @override
   ConsumerState<SearchResultsPage> createState() => _SearchResultsPageState();
 }
 
 class _SearchResultsPageState extends ConsumerState<SearchResultsPage> {
-  static const _pageSize = 20;
-  static const _loadMoreTriggerExtent = 600.0;
   final ScrollController _scrollController = ScrollController();
   final TextEditingController _searchController = TextEditingController();
   Timer? _debounce;
@@ -31,6 +32,7 @@ class _SearchResultsPageState extends ConsumerState<SearchResultsPage> {
   bool _isLoadingMore = false;
   bool _hasMore = false;
   late String _currentQuery;
+  String? _errorMessage;
 
   @override
   void initState() {
@@ -55,8 +57,8 @@ class _SearchResultsPageState extends ConsumerState<SearchResultsPage> {
       return;
     }
 
-    if (_debounce?.isActive ?? false) _debounce!.cancel();
-    _debounce = Timer(const Duration(milliseconds: 300), () async {
+    _debounce?.cancel();
+    _debounce = Timer(AppConstants.searchDebounceMs, () async {
       final q = _searchController.text;
       if (q.isEmpty || q == _currentQuery) {
         if (mounted) {
@@ -70,15 +72,23 @@ class _SearchResultsPageState extends ConsumerState<SearchResultsPage> {
 
       if (mounted) setState(() => _isLoadingSuggestions = true);
       try {
-        final suggestions = await ref
+        final result = await ref
             .read(fysgServiceProvider)
             .getSearchSuggestions(q);
-        if (mounted) {
-          setState(() {
-            _suggestions = suggestions;
-            _isLoadingSuggestions = false;
-          });
-        }
+        
+        if (!mounted) return;
+        
+        result.when(
+          ok: (suggestions) {
+            setState(() {
+              _suggestions = suggestions;
+              _isLoadingSuggestions = false;
+            });
+          },
+          err: (_) {
+            setState(() => _isLoadingSuggestions = false);
+          },
+        );
       } catch (e) {
         if (mounted) setState(() => _isLoadingSuggestions = false);
       }
@@ -87,27 +97,46 @@ class _SearchResultsPageState extends ConsumerState<SearchResultsPage> {
 
   void _onScroll() {
     if (!_scrollController.hasClients || _isLoadingMore || !_hasMore) return;
-    if (_scrollController.position.extentAfter > _loadMoreTriggerExtent) return;
+    if (_scrollController.position.extentAfter > AppConstants.loadMoreTriggerExtent) return;
     if (_scrollDebounce?.isActive ?? false) return;
-    _scrollDebounce = Timer(const Duration(milliseconds: 120), _loadMore);
+    _scrollDebounce = Timer(AppConstants.scrollDebounceMs, _loadMore);
   }
 
   Future<void> _performInitialSearch() async {
-    setState(() => _isLoading = true);
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
     try {
-      final results = await ref
+      final result = await ref
           .read(fysgServiceProvider)
           .searchSongs(_currentQuery, page: 0);
-      final filtered = _filterPlayable(results);
+      
+      if (!mounted) return;
+      
+      result.when(
+        ok: (results) {
+          final filtered = _filterPlayable(results);
+          setState(() {
+            _results = filtered;
+            _hasMore = results.length >= AppConstants.defaultPageSize;
+            _isLoading = false;
+          });
+        },
+        err: (error) {
+          setState(() {
+            _errorMessage = error.message;
+            _isLoading = false;
+          });
+        },
+      );
+    } catch (e) {
       if (mounted) {
         setState(() {
-          _results = filtered;
-          _hasMore = results.length >= _pageSize;
+          _errorMessage = e.toString();
           _isLoading = false;
         });
       }
-    } catch (e) {
-      if (mounted) setState(() => _isLoading = false);
     }
   }
 
@@ -115,18 +144,26 @@ class _SearchResultsPageState extends ConsumerState<SearchResultsPage> {
     setState(() => _isLoadingMore = true);
     final nextPage = _currentPage + 1;
     try {
-      final songs = await ref
+      final result = await ref
           .read(fysgServiceProvider)
           .searchSongs(_currentQuery, page: nextPage);
-      final filtered = _filterPlayable(songs);
-      if (mounted) {
-        setState(() {
-          _results.addAll(filtered);
-          _currentPage = nextPage;
-          _hasMore = songs.length >= _pageSize;
-          _isLoadingMore = false;
-        });
-      }
+      
+      if (!mounted) return;
+      
+      result.when(
+        ok: (songs) {
+          final filtered = _filterPlayable(songs);
+          setState(() {
+            _results.addAll(filtered);
+            _currentPage = nextPage;
+            _hasMore = songs.length >= AppConstants.defaultPageSize;
+            _isLoadingMore = false;
+          });
+        },
+        err: (_) {
+          setState(() => _isLoadingMore = false);
+        },
+      );
     } catch (e) {
       if (mounted) setState(() => _isLoadingMore = false);
     }
@@ -143,6 +180,7 @@ class _SearchResultsPageState extends ConsumerState<SearchResultsPage> {
       _currentPage = 0;
       _results = [];
       _isLoading = true;
+      _errorMessage = null;
       _suggestions = [];
     });
     _performInitialSearch();
@@ -196,10 +234,9 @@ class _SearchResultsPageState extends ConsumerState<SearchResultsPage> {
                           )
                         : null,
                   ),
-                  onChanged: (v) {
-                    setState(
-                      () {},
-                    ); // Trigger rebuild to show suggestions if query changed
+                  onChanged: (_) {
+                    // Trigger rebuild to show suggestions if query changed
+                    setState(() {});
                   },
                   onSubmitted: _newSearch,
                 ),
@@ -224,38 +261,59 @@ class _SearchResultsPageState extends ConsumerState<SearchResultsPage> {
         child: Column(
           children: [
             Expanded(
-              child:
-                  (_searchController.text.isNotEmpty &&
+              child: (_searchController.text.isNotEmpty &&
                       _searchController.text != _currentQuery)
                   ? _buildSuggestions()
                   : _isLoading
-                  ? const Center(child: CircularProgressIndicator())
-                  : _results.isEmpty
-                  ? Center(child: Text(AppLocalizations.of(context).noResults))
-                  : ListView.builder(
-                      controller: _scrollController,
-                      cacheExtent: 800,
-                      addAutomaticKeepAlives: false,
-                      itemCount: _results.length + (_isLoadingMore ? 1 : 0),
-                      itemBuilder: (context, index) {
-                        if (index == _results.length) {
-                          return const Padding(
-                            padding: EdgeInsets.all(16),
-                            child: Center(child: CircularProgressIndicator()),
-                          );
-                        }
-                        final song = _results[index];
-                        return SongListTile(
-                          key: ValueKey(song.id),
-                          song: song,
-                          onTap: () {
-                            ref
-                                .read(playerProvider.notifier)
-                                .logQueue(_results, index);
-                          },
-                        );
-                      },
-                    ),
+                      ? const Center(child: CircularProgressIndicator())
+                      : _errorMessage != null
+                          ? Center(
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(
+                                    Icons.error_outline,
+                                    size: 48,
+                                    color: Colors.grey,
+                                  ),
+                                  const SizedBox(height: 16),
+                                  Text(_errorMessage!),
+                                ],
+                              ),
+                            )
+                          : _results.isEmpty
+                              ? Center(
+                                  child: Text(
+                                    AppLocalizations.of(context).noResults,
+                                  ),
+                                )
+                              : ListView.builder(
+                                  controller: _scrollController,
+                                  cacheExtent: 800,
+                                  addAutomaticKeepAlives: false,
+                                  itemCount:
+                                      _results.length + (_isLoadingMore ? 1 : 0),
+                                  itemBuilder: (context, index) {
+                                    if (index == _results.length) {
+                                      return const Padding(
+                                        padding: EdgeInsets.all(16),
+                                        child: Center(
+                                          child: CircularProgressIndicator(),
+                                        ),
+                                      );
+                                    }
+                                    final song = _results[index];
+                                    return SongListTile(
+                                      key: ValueKey(song.id),
+                                      song: song,
+                                      onTap: () {
+                                        ref
+                                            .read(playerProvider.notifier)
+                                            .logQueue(_results, index);
+                                      },
+                                    );
+                                  },
+                                ),
             ),
             const MiniPlayer(),
           ],

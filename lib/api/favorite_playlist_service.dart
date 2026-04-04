@@ -4,23 +4,26 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/playlist.dart';
+import '../providers/shared_preferences_provider.dart';
+import '../utils/constants.dart';
 
 final favoritePlaylistServiceProvider = Provider(
-  (ref) => FavoritePlaylistService(),
+  (ref) => FavoritePlaylistService(ref.watch(sharedPreferencesProvider)),
 );
 
-final favoritePlaylistsProvider = FutureProvider.autoDispose<List<Playlist>>((
-  ref,
-) async {
-  return ref.read(favoritePlaylistServiceProvider).getFavorites();
-});
+final favoritePlaylistsProvider = FutureProvider.autoDispose<List<Playlist>>(
+  (ref) async {
+    return ref.read(favoritePlaylistServiceProvider).getFavorites();
+  },
+);
 
 class FavoritePlaylistService {
-  static const String _favoritesKey = 'favorite_playlists';
+  final SharedPreferences _prefs;
+
+  FavoritePlaylistService(this._prefs);
 
   Future<List<Playlist>> getFavorites() async {
-    final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getStringList(_favoritesKey) ?? [];
+    final raw = _prefs.getStringList(AppConstants.spFavoritePlaylists) ?? [];
     final result = <Playlist>[];
     for (final item in raw) {
       try {
@@ -39,8 +42,7 @@ class FavoritePlaylistService {
   }
 
   Future<void> toggleFavorite(Playlist playlist) async {
-    final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getStringList(_favoritesKey) ?? [];
+    final raw = _prefs.getStringList(AppConstants.spFavoritePlaylists) ?? [];
     final key = '${playlist.type}:${playlist.id}';
     final existing = <String, String>{};
 
@@ -62,6 +64,9 @@ class FavoritePlaylistService {
       existing[key] = json.encode(playlist.toJson());
     }
 
-    await prefs.setStringList(_favoritesKey, existing.values.toList());
+    await _prefs.setStringList(
+      AppConstants.spFavoritePlaylists,
+      existing.values.toList(),
+    );
   }
 }

@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../api/download_service.dart';
+import '../../api/download_service.dart' show downloadServiceProvider;
 import '../../api/favorite_playlist_service.dart';
-import '../../models/song.dart';
+import '../../api/recently_played_service.dart' show recentSongsProvider;
 import '../../models/playlist.dart';
+import '../../models/song.dart';
 import '../../providers/player_provider.dart';
 import '../common/mini_player.dart';
 import '../common/song_list_tile.dart';
