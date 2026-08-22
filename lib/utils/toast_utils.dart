@@ -14,9 +14,7 @@ class ToastUtils {
         backgroundColor: Colors.black87,
         behavior: SnackBarBehavior.floating,
         width: 200, // Compact width for toast look
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(20),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       ),
     );
   }

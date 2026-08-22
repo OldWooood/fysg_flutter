@@ -38,11 +38,10 @@ class AppConstants {
 
   // 音频相关
   static const int maxSongLoadRetries = 2;
-  static const int prefetchMaxBytes = 4 * 1024 * 1024; // 4GB
+  static const int prefetchMaxBytes = 256 * 1024 * 1024; // 256MB
 
   // UI 相关
   static const double loadMoreTriggerExtent = 600.0;
   static const double miniPlayerHeight = 80.0;
-  static const Duration scrollDebounceMs = Duration(milliseconds: 120);
   static const Duration searchDebounceMs = Duration(milliseconds: 300);
 }

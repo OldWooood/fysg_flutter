@@ -1,22 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../api/download_service.dart' show downloadServiceProvider;
+import '../../api/download_service.dart'
+    show downloadServiceProvider, downloadedSongsProvider;
 import '../../api/favorite_playlist_service.dart';
 import '../../api/recently_played_service.dart' show recentSongsProvider;
 import '../../models/playlist.dart';
-import '../../models/song.dart';
 import '../../providers/player_provider.dart';
-import '../common/mini_player.dart';
 import '../common/song_list_tile.dart';
 import '../../l10n/app_localizations.dart';
 import '../common/song_cover.dart';
 import '../categories/playlist_detail_page.dart';
-
-final downloadedSongsProvider = FutureProvider.autoDispose<List<Song>>((
-  ref,
-) async {
-  return ref.read(downloadServiceProvider).getDownloadedSongs();
-});
 
 class MinePage extends ConsumerStatefulWidget {
   const MinePage({super.key});
@@ -65,20 +58,9 @@ class _MinePageState extends ConsumerState<MinePage>
           ],
         ),
       ),
-      body: Column(
-        children: [
-          Expanded(
-            child: TabBarView(
-              controller: _tabController,
-              children: [
-                _RecentList(),
-                _DownloadList(),
-                _FavoritePlaylistList(),
-              ],
-            ),
-          ),
-          const MiniPlayer(),
-        ],
+      body: TabBarView(
+        controller: _tabController,
+        children: [_RecentList(), _DownloadList(), _FavoritePlaylistList()],
       ),
     );
   }
@@ -110,7 +92,8 @@ class _RecentList extends ConsumerWidget {
         );
       },
       loading: () => const Center(child: CircularProgressIndicator()),
-      error: (e, s) => Center(child: Text('Error: $e')),
+      error: (e, s) =>
+          Center(child: Text(AppLocalizations.of(context).loadFailed)),
     );
   }
 }
@@ -150,7 +133,8 @@ class _DownloadList extends ConsumerWidget {
         );
       },
       loading: () => const Center(child: CircularProgressIndicator()),
-      error: (e, s) => Center(child: Text('Error: $e')),
+      error: (e, s) =>
+          Center(child: Text(AppLocalizations.of(context).loadFailed)),
     );
   }
 }
@@ -174,7 +158,8 @@ class _FavoritePlaylistList extends ConsumerWidget {
         );
       },
       loading: () => const Center(child: CircularProgressIndicator()),
-      error: (e, s) => Center(child: Text('Error: $e')),
+      error: (e, s) =>
+          Center(child: Text(AppLocalizations.of(context).loadFailed)),
     );
   }
 }

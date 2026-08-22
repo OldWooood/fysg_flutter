@@ -13,13 +13,13 @@ class FysgService {
   static final String _commonParams =
       '_app=${AppConstants.apiAppName}&_device=${AppConstants.apiDevice}'
       '&_version=${AppConstants.apiVersion}&_deviceId=&_cvr=0';
-  
+
   final Map<int, Song> _songDetailsCache = {};
   final Map<int, Future<Song>> _songDetailsInFlight = {};
   final Map<String, _CacheEntry<List<Map<String, dynamic>>>>
-      _searchSuggestionsCache = {};
+  _searchSuggestionsCache = {};
   final Map<String, Future<List<Map<String, dynamic>>>>
-      _searchSuggestionsInFlight = {};
+  _searchSuggestionsInFlight = {};
   final Map<String, _CacheEntry<List<Song>>> _searchSongsCache = {};
   final Map<String, Future<List<Song>>> _searchSongsInFlight = {};
   final Map<String, _CacheEntry<List<Song>>> _recommendedSongsCache = {};
@@ -38,7 +38,7 @@ class FysgService {
   }
 
   /// 获取搜索建议
-  /// 
+  ///
   /// 返回 Result 类型以便调用方处理错误
   Future<Result<List<Map<String, dynamic>>, AppError>> getSearchSuggestions(
     String query, {
@@ -49,7 +49,8 @@ class FysgService {
 
     final cacheKey = '${normalized.toLowerCase()}|$size';
     final cached = _searchSuggestionsCache[cacheKey];
-    if (cached != null && _isFresh(cached.timestamp, AppConstants.searchCacheTtl)) {
+    if (cached != null &&
+        _isFresh(cached.timestamp, AppConstants.searchCacheTtl)) {
       return Result.ok(List<Map<String, dynamic>>.from(cached.data));
     }
 
@@ -98,7 +99,10 @@ class FysgService {
     );
 
     try {
-      final response = await _client.get(uri, headers: AppConstants.defaultHeaders);
+      final response = await _client.get(
+        uri,
+        headers: AppConstants.defaultHeaders,
+      );
 
       if (response.statusCode == 200) {
         final jsonResponse = json.decode(utf8.decode(response.bodyBytes));
@@ -139,7 +143,8 @@ class FysgService {
 
     final cacheKey = '${normalized.toLowerCase()}|$page|$size';
     final cached = _searchSongsCache[cacheKey];
-    if (cached != null && _isFresh(cached.timestamp, AppConstants.searchCacheTtl)) {
+    if (cached != null &&
+        _isFresh(cached.timestamp, AppConstants.searchCacheTtl)) {
       return Result.ok(List<Song>.from(cached.data));
     }
 
@@ -182,7 +187,10 @@ class FysgService {
     final uri = Uri.https(_apiBaseUri.host, '/api/app/songs', queryParams);
 
     try {
-      final response = await _client.get(uri, headers: AppConstants.defaultHeaders);
+      final response = await _client.get(
+        uri,
+        headers: AppConstants.defaultHeaders,
+      );
 
       if (response.statusCode == 200) {
         final jsonResponse = json.decode(utf8.decode(response.bodyBytes));
@@ -190,17 +198,17 @@ class FysgService {
           final data = jsonResponse['data'];
           if (data is Map && data['list'] != null) {
             return (data['list'] as List)
-                .map((item) => Song.fromJson(
-                      item,
-                      assetBase: AppConstants.assetBaseUrl,
-                    ))
+                .map(
+                  (item) =>
+                      Song.fromJson(item, assetBase: AppConstants.assetBaseUrl),
+                )
                 .toList();
           } else if (data is List) {
             return data
-                .map((item) => Song.fromJson(
-                      item,
-                      assetBase: AppConstants.assetBaseUrl,
-                    ))
+                .map(
+                  (item) =>
+                      Song.fromJson(item, assetBase: AppConstants.assetBaseUrl),
+                )
                 .toList();
           }
         }
@@ -225,7 +233,8 @@ class FysgService {
   }) async {
     final cacheKey = '$page|$size';
     final cached = _recommendedSongsCache[cacheKey];
-    if (cached != null && _isFresh(cached.timestamp, AppConstants.recommendCacheTtl)) {
+    if (cached != null &&
+        _isFresh(cached.timestamp, AppConstants.recommendCacheTtl)) {
       return Result.ok(List<Song>.from(cached.data));
     }
 
@@ -260,7 +269,10 @@ class FysgService {
         '${_apiBaseUri.scheme}://${_apiBaseUri.host}/api/app/songs?'
         'page=$page&size=$size&sort=playM&$_commonParams',
       );
-      final response = await _client.get(uri, headers: AppConstants.defaultHeaders);
+      final response = await _client.get(
+        uri,
+        headers: AppConstants.defaultHeaders,
+      );
 
       if (response.statusCode == 200) {
         final jsonResponse = json.decode(utf8.decode(response.bodyBytes));
@@ -268,10 +280,10 @@ class FysgService {
           final data = jsonResponse['data'];
           if (data['list'] != null) {
             return (data['list'] as List)
-                .map((item) => Song.fromJson(
-                      item,
-                      assetBase: AppConstants.assetBaseUrl,
-                    ))
+                .map(
+                  (item) =>
+                      Song.fromJson(item, assetBase: AppConstants.assetBaseUrl),
+                )
                 .toList();
           }
         }
@@ -332,7 +344,10 @@ class FysgService {
       final uri = Uri.parse(
         '${_apiBaseUri.scheme}://${_apiBaseUri.host}/api/app/songs/$songId?$_commonParams',
       );
-      final response = await _client.get(uri, headers: AppConstants.defaultHeaders);
+      final response = await _client.get(
+        uri,
+        headers: AppConstants.defaultHeaders,
+      );
 
       if (response.statusCode != 200) {
         throw AppError.network('获取歌曲详情失败: ${response.statusCode}');
@@ -372,7 +387,10 @@ class FysgService {
         '${_apiBaseUri.scheme}://${_apiBaseUri.host}/api/app/$endpoint?'
         'page=$page&size=$size&$_commonParams',
       );
-      final response = await _client.get(uri, headers: AppConstants.defaultHeaders);
+      final response = await _client.get(
+        uri,
+        headers: AppConstants.defaultHeaders,
+      );
 
       if (response.statusCode == 200) {
         final jsonResponse = json.decode(utf8.decode(response.bodyBytes));
@@ -416,12 +434,7 @@ class FysgService {
     int page = AppConstants.defaultPage,
     int size = AppConstants.defaultPageSize,
   }) async {
-    return _fetchCollection(
-      'albums',
-      page: page,
-      size: size,
-      type: 'album',
-    );
+    return _fetchCollection('albums', page: page, size: size, type: 'album');
   }
 
   Future<Result<List<Song>, AppError>> getCollectionSongs(
@@ -445,7 +458,10 @@ class FysgService {
         '${_apiBaseUri.scheme}://${_apiBaseUri.host}/api/app/songs?'
         '$param&page=$page&size=$size&$_commonParams',
       );
-      final response = await _client.get(uri, headers: AppConstants.defaultHeaders);
+      final response = await _client.get(
+        uri,
+        headers: AppConstants.defaultHeaders,
+      );
 
       if (response.statusCode == 200) {
         final jsonResponse = json.decode(utf8.decode(response.bodyBytes));
@@ -454,10 +470,12 @@ class FysgService {
           if (data['list'] != null) {
             return Result.ok(
               (data['list'] as List)
-                  .map((item) => Song.fromJson(
-                        item,
-                        assetBase: AppConstants.assetBaseUrl,
-                      ))
+                  .map(
+                    (item) => Song.fromJson(
+                      item,
+                      assetBase: AppConstants.assetBaseUrl,
+                    ),
+                  )
                   .toList(),
             );
           }

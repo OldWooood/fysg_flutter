@@ -5,10 +5,13 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:just_audio/just_audio.dart';
 
-
 import '../api/download_service.dart';
 import '../api/fysg_service.dart';
-import '../api/recently_played_service.dart' show recentlyPlayedServiceProvider, recentSongsProvider, RecentlyPlayedService;
+import '../api/recently_played_service.dart'
+    show
+        recentlyPlayedServiceProvider,
+        recentSongsProvider,
+        RecentlyPlayedService;
 import '../audio/app_audio_handler.dart';
 import '../models/song.dart';
 import '../utils/constants.dart';
@@ -64,6 +67,7 @@ class FysgPlayerState {
   final List<Song> queue;
   final int currentIndex;
   final PlaybackMode mode;
+  final double speed;
 
   const FysgPlayerState({
     this.isPlaying = false,
@@ -73,6 +77,7 @@ class FysgPlayerState {
     this.queue = const [],
     this.currentIndex = -1,
     this.mode = PlaybackMode.sequence,
+    this.speed = 1.0,
   });
 
   FysgPlayerState copyWith({
@@ -83,6 +88,7 @@ class FysgPlayerState {
     List<Song>? queue,
     int? currentIndex,
     PlaybackMode? mode,
+    double? speed,
   }) {
     return FysgPlayerState(
       isPlaying: isPlaying ?? this.isPlaying,
@@ -92,16 +98,15 @@ class FysgPlayerState {
       queue: queue ?? this.queue,
       currentIndex: currentIndex ?? this.currentIndex,
       mode: mode ?? this.mode,
+      speed: speed ?? this.speed,
     );
   }
 }
 
-class PlayerNotifier extends StateNotifier<FysgPlayerState> {
+class PlayerNotifier extends StateNotifier<FysgPlayerState>
+    implements AppAudioHandlerDelegate {
   final Ref _ref;
   final AudioPlayer _audioPlayer = AudioPlayer();
-  final ConcatenatingAudioSource _playlist = ConcatenatingAudioSource(
-    children: [],
-  );
   final FysgService _service;
   final DownloadService _downloadService;
   final RecentlyPlayedService _recentService;
@@ -117,6 +122,14 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
   Set<int> _prefetchCachedIds = {};
   bool _queueStateRestored = false;
   int? _lastHistorySongId;
+  DateTime _lastPositionPersist = DateTime.now();
+
+  /// 冷启动恢复队列时待使用的续播位置，
+  /// 在队列展开完成、真正加载音源时一次性消费
+  Duration _pendingRestorePosition = Duration.zero;
+
+  /// 播放中定期持久化进度的间隔，避免频繁写 SharedPreferences
+  static const _positionPersistInterval = Duration(seconds: 5);
 
   // Stream 订阅管理，防止内存泄漏
   final List<StreamSubscription> _subscriptions = [];
@@ -136,13 +149,16 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
   Future<void> _init() async {
     // Set the playlist as audio source to enable media controls
     try {
-      await _audioPlayer.setAudioSource(_playlist);
+      await _audioPlayer.setAudioSources(const []);
       // Keep initial behavior aligned with default sequence mode.
       await _audioPlayer.setLoopMode(LoopMode.all);
       await _audioPlayer.setShuffleModeEnabled(false);
     } catch (e) {
       debugPrint('Error initializing audio player: $e');
     }
+
+    // 接入通知栏/锁屏/耳机的播放控制指令
+    AppAudioService.handler?.attachDelegate(this);
 
     // 使用订阅列表管理所有 Stream 订阅
     _subscriptions.add(
@@ -154,6 +170,9 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
           state = state.copyWith(isPlaying: playerState.playing);
           if (playerState.playing) {
             _logHistoryIfNeeded();
+          } else {
+            // 暂停时持久化位置，保证下次冷启动可续播
+            _persistPlaybackState(includePosition: true);
           }
         },
         onError: (Object e, StackTrace st) {
@@ -190,10 +209,23 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
           if (!_mounted || state.position == position) return;
           state = state.copyWith(position: position);
           _syncBackgroundPlayback();
+          _maybePersistPosition();
           _maybePrefetchNext(position);
         },
         onError: (Object e, StackTrace st) {
           debugPrint('PositionStream error: $e');
+        },
+      ),
+    );
+
+    _subscriptions.add(
+      _audioPlayer.speedStream.listen(
+        (speed) {
+          if (!_mounted || state.speed == speed) return;
+          state = state.copyWith(speed: speed);
+        },
+        onError: (Object e, StackTrace st) {
+          debugPrint('SpeedStream error: $e');
         },
       ),
     );
@@ -401,6 +433,8 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
           .downloadSong(song)
           .then((_) {
             debugPrint('Downloaded ${song.name}');
+            // 下载完成后刷新"已下载"列表
+            if (_mounted) _ref.invalidate(downloadedSongsProvider);
           })
           .catchError((e) {
             debugPrint('Download error: $e');
@@ -443,8 +477,8 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
     final displayQueue = List<Song>.from(songs);
     final safeDisplayIndex =
         (chosenOriginalIndex >= 0 && chosenOriginalIndex < displayQueue.length)
-            ? chosenOriginalIndex
-            : index;
+        ? chosenOriginalIndex
+        : index;
 
     // Show full list immediately; keep index stream from remapping to stale index 0.
     state = state.copyWith(
@@ -457,10 +491,8 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
     _syncBackgroundNowPlaying(displayQueue[safeDisplayIndex]);
     _suppressIndexSync = true;
 
-    await _playlist.clear();
-    await _playlist.add(firstPlayable.source);
-    await _audioPlayer.setAudioSource(
-      _playlist,
+    await _audioPlayer.setAudioSources(
+      [firstPlayable.source],
       initialIndex: 0,
       preload: true,
     );
@@ -492,7 +524,7 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
   Future<void> _restoreQueueState() async {
     if (_queueStateRestored) return;
     _queueStateRestored = true;
-    
+
     // 使用通过 Riverpod 注入的 SharedPreferences 实例
     final prefs = _ref.read(sharedPreferencesProvider);
     final raw = prefs.getStringList(AppConstants.spQueueCacheKey);
@@ -532,15 +564,16 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
 
     _suppressIndexSync = true;
     final buildToken = ++_queueBuildToken;
+    // 记录待恢复位置，待队列展开加载音源时通过 initialPosition 生效
+    // （音源未加载前直接 seek 不会生效）
+    if (savedPositionMs > 0) {
+      _pendingRestorePosition = Duration(milliseconds: savedPositionMs);
+    }
     _expandQueueInBackground(
       songs: cachedSongs,
       currentSongSnapshot: cachedSongs[index],
       buildToken: buildToken,
     );
-
-    if (savedPositionMs > 0) {
-      _audioPlayer.seek(Duration(milliseconds: savedPositionMs));
-    }
   }
 
   Future<void> _persistQueueCache() async {
@@ -572,11 +605,29 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
     required Song currentSongSnapshot,
     required int buildToken,
   }) async {
+    // 并发解析（本地文件/详情请求混合），保持原始顺序
+    final entries = List<({Song song, AudioSource source})?>.filled(
+      songs.length,
+      null,
+    );
+    var cursor = 0;
+    Future<void> worker() async {
+      while (true) {
+        final index = cursor++;
+        if (index >= songs.length) return;
+        if (!_mounted || buildToken != _queueBuildToken) return;
+        entries[index] = await _buildPlayableEntry(songs[index]);
+      }
+    }
+
+    const concurrency = 4;
+    await Future.wait(
+      List.generate(concurrency, (_) => worker(), growable: false),
+    );
+
     final playableSongs = <Song>[];
     final sources = <AudioSource>[];
-
-    for (final song in songs) {
-      final entry = await _buildPlayableEntry(song);
+    for (final entry in entries) {
       if (entry == null) continue;
       playableSongs.add(entry.song);
       sources.add(entry.source);
@@ -599,13 +650,14 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
     }
     if (currentIndex < 0) return;
 
-    final resumePosition = _audioPlayer.position;
+    final resumePosition = _audioPlayer.playing
+        ? _audioPlayer.position
+        : _pendingRestorePosition;
+    _pendingRestorePosition = Duration.zero;
     final shouldResume = _audioPlayer.playing;
 
-    await _playlist.clear();
-    await _playlist.addAll(sources);
-    await _audioPlayer.setAudioSource(
-      _playlist,
+    await _audioPlayer.setAudioSources(
+      sources,
       initialIndex: currentIndex,
       initialPosition: resumePosition,
       preload: true,
@@ -738,6 +790,7 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
     if (handler == null) return;
     handler.setPlayback(
       isPlaying: _audioPlayer.playing,
+      hasCurrentSong: state.currentSong != null,
       position: _audioPlayer.position,
       bufferedPosition: _audioPlayer.bufferedPosition,
       speed: _audioPlayer.speed,
@@ -768,6 +821,43 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState> {
         a.cover == b.cover &&
         a.url == b.url &&
         a.lyrics == b.lyrics;
+  }
+
+  Future<void> _maybePersistPosition() async {
+    if (!_audioPlayer.playing) return;
+    final now = DateTime.now();
+    if (now.difference(_lastPositionPersist) < _positionPersistInterval) return;
+    _lastPositionPersist = now;
+    await _persistPlaybackState(includePosition: true);
+  }
+
+  /// 供 App 生命周期回调在退到后台时立即保存进度
+  Future<void> persistPlaybackStateNow() async {
+    _lastPositionPersist = DateTime.now();
+    await _persistPlaybackState(includePosition: true);
+  }
+
+  // --- 通知栏 / 锁屏 / 耳机线控指令入口 ---
+  @override
+  void onPlay() => _audioPlayer.play();
+
+  @override
+  void onPause() => _audioPlayer.pause();
+
+  @override
+  void onSkipToNext() => next();
+
+  @override
+  void onSkipToPrevious() => previous();
+
+  @override
+  void onSeek(Duration position) => seek(position);
+
+  @override
+  void onStop() => stopPlayback();
+
+  Future<void> setSpeed(double speed) async {
+    await _audioPlayer.setSpeed(speed);
   }
 
   void togglePlayPause() {

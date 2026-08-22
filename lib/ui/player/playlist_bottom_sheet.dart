@@ -83,7 +83,7 @@ class _PlaylistBottomSheetState extends ConsumerState<PlaylistBottomSheet> {
                         leading: isCurrent
                             ? Icon(
                                 Icons.equalizer,
-                                color: Theme.of(context).primaryColor,
+                                color: Theme.of(context).colorScheme.primary,
                               )
                             : Text(
                                 "${index + 1}",
@@ -95,7 +95,7 @@ class _PlaylistBottomSheetState extends ConsumerState<PlaylistBottomSheet> {
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                             color: isCurrent
-                                ? Theme.of(context).primaryColor
+                                ? Theme.of(context).colorScheme.primary
                                 : null,
                             fontWeight: isCurrent
                                 ? FontWeight.bold
@@ -103,7 +103,7 @@ class _PlaylistBottomSheetState extends ConsumerState<PlaylistBottomSheet> {
                           ),
                         ),
                         subtitle: Text(
-                          song.artist ?? "Unknown",
+                          song.artist ?? AppLocalizations.of(context).unknown,
                           maxLines: 1,
                           style: const TextStyle(fontSize: 12),
                         ),

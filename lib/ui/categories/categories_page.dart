@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -10,7 +8,6 @@ import '../../l10n/app_localizations.dart';
 import '../../models/playlist.dart';
 import '../../providers/player_provider.dart';
 import '../../utils/constants.dart';
-import '../common/mini_player.dart';
 import 'playlist_detail_page.dart';
 
 class CategoriesPage extends ConsumerStatefulWidget {
@@ -44,27 +41,20 @@ class _CategoriesPageState extends ConsumerState<CategoriesPage>
         automaticallyImplyLeading: false,
         bottom: TabBar(
           controller: _tabController,
-          labelColor: Theme.of(context).primaryColor,
-          unselectedLabelColor: Colors.grey,
-          indicatorColor: Theme.of(context).primaryColor,
+          labelColor: Theme.of(context).colorScheme.primary,
+          unselectedLabelColor: Theme.of(context).hintColor,
+          indicatorColor: Theme.of(context).colorScheme.primary,
           tabs: [
             Tab(text: AppLocalizations.of(context).albums),
             Tab(text: AppLocalizations.of(context).playlists),
           ],
         ),
       ),
-      body: Column(
-        children: [
-          Expanded(
-            child: TabBarView(
-              controller: _tabController,
-              children: const [
-                _CategoryGrid(type: 'album'),
-                _CategoryGrid(type: 'playlist'),
-              ],
-            ),
-          ),
-          const MiniPlayer(),
+      body: TabBarView(
+        controller: _tabController,
+        children: const [
+          _CategoryGrid(type: 'album'),
+          _CategoryGrid(type: 'playlist'),
         ],
       ),
     );
@@ -81,7 +71,6 @@ class _CategoryGrid extends ConsumerStatefulWidget {
 
 class _CategoryGridState extends ConsumerState<_CategoryGrid> {
   final ScrollController _scrollController = ScrollController();
-  Timer? _scrollDebounce;
   List<Playlist> _items = [];
   int _currentPage = 0;
   bool _isLoading = true;
@@ -103,9 +92,9 @@ class _CategoryGridState extends ConsumerState<_CategoryGrid> {
       'playlist' => await service.getPlaylists(page: page),
       _ => throw UnsupportedError('Unknown type: ${widget.type}'),
     };
-    
+
     if (!mounted) return;
-    
+
     result.when(
       ok: (items) {
         setState(() {
@@ -139,11 +128,11 @@ class _CategoryGridState extends ConsumerState<_CategoryGrid> {
 
   void _onScroll() {
     if (!_scrollController.hasClients || _isLoadingMore || !_hasMore) return;
-    if (_scrollController.position.extentAfter > AppConstants.loadMoreTriggerExtent) {
+    if (_scrollController.position.extentAfter >
+        AppConstants.loadMoreTriggerExtent) {
       return;
     }
-    if (_scrollDebounce?.isActive ?? false) return;
-    _scrollDebounce = Timer(AppConstants.scrollDebounceMs, _loadMore);
+    _loadMore();
   }
 
   Future<void> _loadMore() async {
@@ -154,7 +143,6 @@ class _CategoryGridState extends ConsumerState<_CategoryGrid> {
 
   @override
   void dispose() {
-    _scrollDebounce?.cancel();
     _scrollController.dispose();
     super.dispose();
   }
@@ -162,7 +150,7 @@ class _CategoryGridState extends ConsumerState<_CategoryGrid> {
   @override
   Widget build(BuildContext context) {
     if (_isLoading) return const Center(child: CircularProgressIndicator());
-    
+
     if (_errorMessage != null) {
       return Center(
         child: Column(
@@ -180,12 +168,16 @@ class _CategoryGridState extends ConsumerState<_CategoryGrid> {
                 });
                 _fetchInitialData();
               },
-              child: const Text('重试'),
+              child: Text(AppLocalizations.of(context).retry),
             ),
           ],
         ),
       );
     }
+
+    final placeholderColor = Theme.of(
+      context,
+    ).colorScheme.surfaceContainerHighest;
 
     return MasonryGridView.count(
       controller: _scrollController,
@@ -215,7 +207,7 @@ class _CategoryGridState extends ConsumerState<_CategoryGrid> {
               borderRadius: BorderRadius.circular(12),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.05),
+                  color: Colors.black.withValues(alpha: 0.08),
                   blurRadius: 10,
                   offset: const Offset(0, 4),
                 ),
@@ -227,28 +219,31 @@ class _CategoryGridState extends ConsumerState<_CategoryGrid> {
               children: [
                 AspectRatio(
                   aspectRatio: 1,
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: Colors.grey[200],
-                      image: item.cover != null
-                          ? DecorationImage(
-                              image: CachedNetworkImageProvider(
-                                item.cover!,
-                                headers: ImageCacheService.headers,
+                  child: Hero(
+                    tag: 'playlist-cover-${widget.type}-${item.id}',
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: placeholderColor,
+                        image: item.cover != null
+                            ? DecorationImage(
+                                image: CachedNetworkImageProvider(
+                                  item.cover!,
+                                  headers: ImageCacheService.headers,
+                                ),
+                                fit: BoxFit.cover,
+                              )
+                            : null,
+                      ),
+                      child: item.cover == null
+                          ? Center(
+                              child: Icon(
+                                Icons.music_note,
+                                size: 40,
+                                color: Theme.of(context).hintColor,
                               ),
-                              fit: BoxFit.cover,
                             )
                           : null,
                     ),
-                    child: item.cover == null
-                        ? const Center(
-                            child: Icon(
-                              Icons.music_note,
-                              size: 40,
-                              color: Colors.grey,
-                            ),
-                          )
-                        : null,
                   ),
                 ),
                 Padding(

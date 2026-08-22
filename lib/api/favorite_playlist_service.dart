@@ -11,11 +11,11 @@ final favoritePlaylistServiceProvider = Provider(
   (ref) => FavoritePlaylistService(ref.watch(sharedPreferencesProvider)),
 );
 
-final favoritePlaylistsProvider = FutureProvider.autoDispose<List<Playlist>>(
-  (ref) async {
-    return ref.read(favoritePlaylistServiceProvider).getFavorites();
-  },
-);
+final favoritePlaylistsProvider = FutureProvider.autoDispose<List<Playlist>>((
+  ref,
+) async {
+  return ref.read(favoritePlaylistServiceProvider).getFavorites();
+});
 
 class FavoritePlaylistService {
   final SharedPreferences _prefs;

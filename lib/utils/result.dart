@@ -1,7 +1,7 @@
 import 'package:flutter/foundation.dart';
 
 /// 结果类型，用于替代异常处理
-/// 
+///
 /// 使用示例:
 /// ```dart
 /// Future<Result<List<Song>, AppError>> searchSongs(String query) async {

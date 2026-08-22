@@ -17,6 +17,13 @@ final downloadServiceProvider = Provider((ref) {
   return service;
 });
 
+/// 已下载歌曲列表（下载完成/删除后通过 invalidate 刷新）
+final downloadedSongsProvider = FutureProvider.autoDispose<List<Song>>(((
+  ref,
+) async {
+  return ref.watch(downloadServiceProvider).getDownloadedSongs();
+}));
+
 class DownloadService {
   final Dio _dio = Dio();
   final SharedPreferences _prefs;

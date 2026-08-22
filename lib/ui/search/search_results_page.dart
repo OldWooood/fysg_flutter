@@ -23,7 +23,6 @@ class _SearchResultsPageState extends ConsumerState<SearchResultsPage> {
   final ScrollController _scrollController = ScrollController();
   final TextEditingController _searchController = TextEditingController();
   Timer? _debounce;
-  Timer? _scrollDebounce;
   List<Map<String, dynamic>> _suggestions = [];
   bool _isLoadingSuggestions = false;
   List<Song> _results = [];
@@ -75,9 +74,9 @@ class _SearchResultsPageState extends ConsumerState<SearchResultsPage> {
         final result = await ref
             .read(fysgServiceProvider)
             .getSearchSuggestions(q);
-        
+
         if (!mounted) return;
-        
+
         result.when(
           ok: (suggestions) {
             setState(() {
@@ -97,9 +96,11 @@ class _SearchResultsPageState extends ConsumerState<SearchResultsPage> {
 
   void _onScroll() {
     if (!_scrollController.hasClients || _isLoadingMore || !_hasMore) return;
-    if (_scrollController.position.extentAfter > AppConstants.loadMoreTriggerExtent) return;
-    if (_scrollDebounce?.isActive ?? false) return;
-    _scrollDebounce = Timer(AppConstants.scrollDebounceMs, _loadMore);
+    if (_scrollController.position.extentAfter >
+        AppConstants.loadMoreTriggerExtent) {
+      return;
+    }
+    _loadMore();
   }
 
   Future<void> _performInitialSearch() async {
@@ -111,9 +112,9 @@ class _SearchResultsPageState extends ConsumerState<SearchResultsPage> {
       final result = await ref
           .read(fysgServiceProvider)
           .searchSongs(_currentQuery, page: 0);
-      
+
       if (!mounted) return;
-      
+
       result.when(
         ok: (results) {
           final filtered = _filterPlayable(results);
@@ -147,9 +148,9 @@ class _SearchResultsPageState extends ConsumerState<SearchResultsPage> {
       final result = await ref
           .read(fysgServiceProvider)
           .searchSongs(_currentQuery, page: nextPage);
-      
+
       if (!mounted) return;
-      
+
       result.when(
         ok: (songs) {
           final filtered = _filterPlayable(songs);
@@ -192,7 +193,6 @@ class _SearchResultsPageState extends ConsumerState<SearchResultsPage> {
     _searchController.dispose();
     _scrollController.dispose();
     _debounce?.cancel();
-    _scrollDebounce?.cancel();
     super.dispose();
   }
 
@@ -205,12 +205,12 @@ class _SearchResultsPageState extends ConsumerState<SearchResultsPage> {
           margin: const EdgeInsets.only(right: 8),
           padding: const EdgeInsets.symmetric(horizontal: 12),
           decoration: BoxDecoration(
-            color: Colors.grey[200],
+            color: Theme.of(context).colorScheme.surfaceContainerHighest,
             borderRadius: BorderRadius.circular(25),
           ),
           child: Row(
             children: [
-              const Icon(Icons.search, color: Colors.grey, size: 20),
+              Icon(Icons.search, color: Theme.of(context).hintColor, size: 20),
               const SizedBox(width: 8),
               Expanded(
                 child: TextField(
@@ -250,7 +250,7 @@ class _SearchResultsPageState extends ConsumerState<SearchResultsPage> {
             child: Text(
               AppLocalizations.of(context).searchAction,
               style: TextStyle(
-                color: Theme.of(context).primaryColor,
+                color: Theme.of(context).colorScheme.primary,
                 fontWeight: FontWeight.bold,
               ),
             ),
@@ -261,59 +261,53 @@ class _SearchResultsPageState extends ConsumerState<SearchResultsPage> {
         child: Column(
           children: [
             Expanded(
-              child: (_searchController.text.isNotEmpty &&
+              child:
+                  (_searchController.text.isNotEmpty &&
                       _searchController.text != _currentQuery)
                   ? _buildSuggestions()
                   : _isLoading
-                      ? const Center(child: CircularProgressIndicator())
-                      : _errorMessage != null
-                          ? Center(
-                              child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  const Icon(
-                                    Icons.error_outline,
-                                    size: 48,
-                                    color: Colors.grey,
-                                  ),
-                                  const SizedBox(height: 16),
-                                  Text(_errorMessage!),
-                                ],
-                              ),
-                            )
-                          : _results.isEmpty
-                              ? Center(
-                                  child: Text(
-                                    AppLocalizations.of(context).noResults,
-                                  ),
-                                )
-                              : ListView.builder(
-                                  controller: _scrollController,
-                                  cacheExtent: 800,
-                                  addAutomaticKeepAlives: false,
-                                  itemCount:
-                                      _results.length + (_isLoadingMore ? 1 : 0),
-                                  itemBuilder: (context, index) {
-                                    if (index == _results.length) {
-                                      return const Padding(
-                                        padding: EdgeInsets.all(16),
-                                        child: Center(
-                                          child: CircularProgressIndicator(),
-                                        ),
-                                      );
-                                    }
-                                    final song = _results[index];
-                                    return SongListTile(
-                                      key: ValueKey(song.id),
-                                      song: song,
-                                      onTap: () {
-                                        ref
-                                            .read(playerProvider.notifier)
-                                            .logQueue(_results, index);
-                                      },
-                                    );
-                                  },
-                                ),
+                  ? const Center(child: CircularProgressIndicator())
+                  : _errorMessage != null
+                  ? Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(
+                            Icons.error_outline,
+                            size: 48,
+                            color: Colors.grey,
+                          ),
+                          const SizedBox(height: 16),
+                          Text(_errorMessage!),
+                        ],
+                      ),
+                    )
+                  : _results.isEmpty
+                  ? Center(child: Text(AppLocalizations.of(context).noResults))
+                  : ListView.builder(
+                      controller: _scrollController,
+                      cacheExtent: 800,
+                      addAutomaticKeepAlives: false,
+                      itemCount: _results.length + (_isLoadingMore ? 1 : 0),
+                      itemBuilder: (context, index) {
+                        if (index == _results.length) {
+                          return const Padding(
+                            padding: EdgeInsets.all(16),
+                            child: Center(child: CircularProgressIndicator()),
+                          );
+                        }
+                        final song = _results[index];
+                        return SongListTile(
+                          key: ValueKey(song.id),
+                          song: song,
+                          onTap: () {
+                            ref
+                                .read(playerProvider.notifier)
+                                .logQueue(_results, index);
+                          },
+                        );
+                      },
+                    ),
             ),
             const MiniPlayer(),
           ],
@@ -337,7 +331,7 @@ class _SearchResultsPageState extends ConsumerState<SearchResultsPage> {
       itemBuilder: (context, index) {
         final suggestion = _suggestions[index];
         return ListTile(
-          leading: const Icon(Icons.search, color: Colors.grey),
+          leading: Icon(Icons.search, color: Theme.of(context).hintColor),
           title: Text(suggestion['name'] ?? ''),
           onTap: () => _newSearch(suggestion['name'] ?? ''),
         );

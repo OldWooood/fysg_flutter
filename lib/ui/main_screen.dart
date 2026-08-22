@@ -6,6 +6,7 @@ import 'categories/categories_page.dart';
 import 'search/search_page.dart';
 import 'mine/mine_page.dart';
 import '../l10n/app_localizations.dart';
+import 'common/mini_player.dart';
 
 class MainScreen extends ConsumerStatefulWidget {
   const MainScreen({super.key});
@@ -14,7 +15,8 @@ class MainScreen extends ConsumerStatefulWidget {
   ConsumerState<MainScreen> createState() => _MainScreenState();
 }
 
-class _MainScreenState extends ConsumerState<MainScreen> {
+class _MainScreenState extends ConsumerState<MainScreen>
+    with WidgetsBindingObserver {
   int _currentIndex = 0;
 
   final List<Widget> _pages = const [
@@ -27,9 +29,25 @@ class _MainScreenState extends ConsumerState<MainScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ref.read(playerProvider.notifier).restoreCachedQueue();
     });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // 退到后台/被挂起时保存播放进度，保证下次冷启动可续播
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive) {
+      ref.read(playerProvider.notifier).persistPlaybackStateNow();
+    }
   }
 
   @override
@@ -38,7 +56,15 @@ class _MainScreenState extends ConsumerState<MainScreen> {
       body: SafeArea(
         top: true,
         bottom: false,
-        child: IndexedStack(index: _currentIndex, children: _pages),
+        child: Column(
+          children: [
+            Expanded(
+              child: IndexedStack(index: _currentIndex, children: _pages),
+            ),
+            // 全局唯一的 MiniPlayer，避免四个 Tab 各持一份
+            const MiniPlayer(),
+          ],
+        ),
       ),
       bottomNavigationBar: SafeArea(
         top: false,
@@ -51,11 +77,13 @@ class _MainScreenState extends ConsumerState<MainScreen> {
           },
           destinations: [
             NavigationDestination(
-              icon: const Icon(Icons.home),
+              icon: const Icon(Icons.home_outlined),
+              selectedIcon: const Icon(Icons.home_filled),
               label: AppLocalizations.of(context).home,
             ),
             NavigationDestination(
-              icon: const Icon(Icons.library_music),
+              icon: const Icon(Icons.library_music_outlined),
+              selectedIcon: const Icon(Icons.library_music),
               label: AppLocalizations.of(context).browse,
             ),
             NavigationDestination(
@@ -63,7 +91,8 @@ class _MainScreenState extends ConsumerState<MainScreen> {
               label: AppLocalizations.of(context).search,
             ),
             NavigationDestination(
-              icon: const Icon(Icons.person),
+              icon: const Icon(Icons.person_outline),
+              selectedIcon: const Icon(Icons.person),
               label: AppLocalizations.of(context).mine,
             ),
           ],

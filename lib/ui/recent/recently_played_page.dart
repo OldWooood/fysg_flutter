@@ -45,7 +45,9 @@ class RecentlyPlayedPage extends ConsumerWidget {
                   );
                 },
                 loading: () => const Center(child: CircularProgressIndicator()),
-                error: (e, s) => Center(child: Text('Error: $e')),
+                error: (e, s) => Center(
+                  child: Text(AppLocalizations.of(context).loadFailed),
+                ),
               ),
             ),
             const MiniPlayer(),

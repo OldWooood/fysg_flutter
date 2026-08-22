@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../l10n/app_localizations.dart';
 import '../../models/song.dart';
 import 'song_cover.dart';
 
@@ -49,7 +50,7 @@ class SongListTile extends StatelessWidget {
         style: effectiveTitleStyle,
       ),
       subtitle: Text(
-        song.artist ?? 'Unknown',
+        song.artist ?? AppLocalizations.of(context).unknown,
         maxLines: 2,
         overflow: TextOverflow.ellipsis,
         style: effectiveSubtitleStyle,
@@ -64,6 +65,7 @@ class SongListTile extends StatelessWidget {
       imageUrl: song.cover,
       width: coverSize,
       height: coverSize,
+      memCacheWidth: (coverSize * 2).round(),
       borderRadius: coverRadius,
       placeholderIcon: fallbackIcon,
       placeholderIconSize: coverSize * 0.8,

@@ -25,7 +25,6 @@ class PlaylistDetailPage extends ConsumerStatefulWidget {
 
 class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
   final ScrollController _scrollController = ScrollController();
-  Timer? _scrollDebounce;
   List<Song> _songs = [];
   int _currentPage = 0;
   bool _isLoading = true;
@@ -42,11 +41,11 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
 
   void _onScroll() {
     if (!_scrollController.hasClients || _isLoadingMore || !_hasMore) return;
-    if (_scrollController.position.extentAfter > AppConstants.loadMoreTriggerExtent) {
+    if (_scrollController.position.extentAfter >
+        AppConstants.loadMoreTriggerExtent) {
       return;
     }
-    if (_scrollDebounce?.isActive ?? false) return;
-    _scrollDebounce = Timer(AppConstants.scrollDebounceMs, _loadMore);
+    _loadMore();
   }
 
   Future<void> _fetchInitialSongs() async {
@@ -56,9 +55,9 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
       widget.playlist.id,
       page: 0,
     );
-    
+
     if (!mounted) return;
-    
+
     result.when(
       ok: (songs) {
         setState(() {
@@ -72,9 +71,6 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
           _isLoading = false;
           _errorMessage = error.message;
         });
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error loading songs: ${error.message}')),
-        );
       },
     );
   }
@@ -89,9 +85,9 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
       widget.playlist.id,
       page: nextPage,
     );
-    
+
     if (!mounted) return;
-    
+
     result.when(
       ok: (songs) {
         setState(() {
@@ -109,7 +105,6 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
 
   @override
   void dispose() {
-    _scrollDebounce?.cancel();
     _scrollController.dispose();
     super.dispose();
   }
@@ -139,17 +134,23 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
                           color: Colors.white,
-                          shadows: [Shadow(color: Colors.black, blurRadius: 10)],
+                          shadows: [
+                            Shadow(color: Colors.black, blurRadius: 10),
+                          ],
                         ),
                       ),
                       background: widget.playlist.cover != null
-                          ? CachedNetworkImage(
-                              imageUrl: widget.playlist.cover!,
-                              httpHeaders: ImageCacheService.headers,
-                              fit: BoxFit.cover,
+                          ? Hero(
+                              tag:
+                                  'playlist-cover-${widget.playlist.type}-${widget.playlist.id}',
+                              child: CachedNetworkImage(
+                                imageUrl: widget.playlist.cover!,
+                                httpHeaders: ImageCacheService.headers,
+                                fit: BoxFit.cover,
+                              ),
                             )
                           : ColoredBox(
-                              color: Theme.of(context).primaryColor,
+                              color: Theme.of(context).colorScheme.primary,
                             ),
                     ),
                     actions: [
@@ -168,7 +169,9 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
                               ref.invalidate(favoritePlaylistsProvider);
                             },
                             icon: Icon(
-                              isFavorite ? Icons.favorite : Icons.favorite_border,
+                              isFavorite
+                                  ? Icons.favorite
+                                  : Icons.favorite_border,
                               color: Colors.white,
                             ),
                             label: Text(
@@ -206,7 +209,7 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
                                 });
                                 _fetchInitialSongs();
                               },
-                              child: const Text('重试'),
+                              child: Text(AppLocalizations.of(context).retry),
                             ),
                           ],
                         ),
@@ -231,7 +234,9 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
                             ),
                           ),
                           style: ElevatedButton.styleFrom(
-                            backgroundColor: Theme.of(context).primaryColor,
+                            backgroundColor: Theme.of(
+                              context,
+                            ).colorScheme.primary,
                             foregroundColor: Colors.white,
                             padding: const EdgeInsets.symmetric(vertical: 12),
                             shape: RoundedRectangleBorder(
@@ -265,7 +270,7 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
                             titleStyle: TextStyle(
                               fontWeight: FontWeight.bold,
                               color: isPlaying
-                                  ? Theme.of(context).primaryColor
+                                  ? Theme.of(context).colorScheme.primary
                                   : null,
                             ),
                             subtitleStyle: const TextStyle(fontSize: 12),

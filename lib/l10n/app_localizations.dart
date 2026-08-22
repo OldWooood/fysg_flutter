@@ -52,6 +52,16 @@ class AppLocalizations {
       'add_favorite': 'Add to Favorites',
       'remove_favorite': 'Remove Favorite',
       'no_favorites': 'No favorites yet',
+      'retry': 'Retry',
+      'load_failed': 'Failed to load',
+      'unknown': 'Unknown',
+      'unknown_artist': 'Unknown Artist',
+      'search_empty_hint': 'Search songs, albums or artists',
+      'share': 'Share',
+      'speed': 'Speed',
+      'share_text_song': 'Recommended a gospel song: ',
+      'play': 'Play',
+      'pause': 'Pause',
     },
     'zh': {
       'home': '首页',
@@ -94,6 +104,16 @@ class AppLocalizations {
       'add_favorite': '收藏',
       'remove_favorite': '取消收藏',
       'no_favorites': '暂无收藏',
+      'retry': '重试',
+      'load_failed': '加载失败',
+      'unknown': '未知',
+      'unknown_artist': '未知歌手',
+      'search_empty_hint': '搜索歌曲、专辑或歌手',
+      'share': '分享',
+      'speed': '倍速',
+      'share_text_song': '推荐一首福音诗歌：',
+      'play': '播放',
+      'pause': '暂停',
     },
   };
 
@@ -154,6 +174,20 @@ class AppLocalizations {
       _localizedValues[locale.languageCode]!['remove_favorite']!;
   String get noFavorites =>
       _localizedValues[locale.languageCode]!['no_favorites']!;
+  String get retry => _localizedValues[locale.languageCode]!['retry']!;
+  String get loadFailed =>
+      _localizedValues[locale.languageCode]!['load_failed']!;
+  String get unknown => _localizedValues[locale.languageCode]!['unknown']!;
+  String get unknownArtist =>
+      _localizedValues[locale.languageCode]!['unknown_artist']!;
+  String get searchEmptyHint =>
+      _localizedValues[locale.languageCode]!['search_empty_hint']!;
+  String get share => _localizedValues[locale.languageCode]!['share']!;
+  String get speed => _localizedValues[locale.languageCode]!['speed']!;
+  String get play => _localizedValues[locale.languageCode]!['play']!;
+  String get pause => _localizedValues[locale.languageCode]!['pause']!;
+  String shareTextSong(String song) =>
+      '${_localizedValues[locale.languageCode]!['share_text_song']!}$song';
 }
 
 class AppLocalizationsDelegate extends LocalizationsDelegate<AppLocalizations> {

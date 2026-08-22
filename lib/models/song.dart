@@ -57,8 +57,7 @@ class Song {
 
     final int songId = int.tryParse('${json['songId'] ?? 0}') ?? 0;
     final int fallbackId =
-        int.tryParse('${json['id'] ?? json['audioId'] ?? 0}') ??
-        0;
+        int.tryParse('${json['id'] ?? json['audioId'] ?? 0}') ?? 0;
     final int parsedId = songId != 0 ? songId : fallbackId;
 
     return Song(

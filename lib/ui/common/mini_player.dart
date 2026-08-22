@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../l10n/app_localizations.dart';
 import '../../providers/player_provider.dart';
 import '../player/player_page.dart';
 import '../player/playlist_bottom_sheet.dart';
@@ -21,7 +22,7 @@ class _MiniPlayerState extends ConsumerState<MiniPlayer> {
 
     if (song == null) return const SizedBox.shrink();
     final colorScheme = Theme.of(context).colorScheme;
-    final backgroundColor = colorScheme.surface;
+    final backgroundColor = colorScheme.surfaceContainer;
     final foregroundColor = colorScheme.onSurface;
     final secondaryColor = foregroundColor.withValues(alpha: 0.7);
 
@@ -53,100 +54,146 @@ class _MiniPlayerState extends ConsumerState<MiniPlayer> {
           ],
         ),
         padding: const EdgeInsets.symmetric(vertical: 8),
-        child: Row(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            SongCover(
-              imageUrl: song.cover,
-              width: 70,
-              height: 70,
-              fit: BoxFit.cover,
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    song.name,
-                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                      fontWeight: FontWeight.bold,
-                      color: foregroundColor,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  if (song.artist != null)
-                    Text(
-                      song.artist!,
-                      style: Theme.of(
-                        context,
-                      ).textTheme.bodyMedium?.copyWith(color: secondaryColor),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  const SizedBox(height: 2),
-                  Row(
+            const _MiniProgressLine(),
+            Row(
+              children: [
+                SongCover(
+                  imageUrl: song.cover,
+                  width: 70,
+                  height: 70,
+                  memCacheWidth: 160,
+                  fit: BoxFit.cover,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Expanded(
-                        child: IconButton(
-                          icon: Icon(
-                            Icons.skip_previous,
-                            color: foregroundColor,
-                          ),
-                          visualDensity: VisualDensity.compact,
-                          onPressed: () {
-                            ref.read(playerProvider.notifier).previous();
-                          },
+                      Text(
+                        song.name,
+                        style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                          fontWeight: FontWeight.bold,
+                          color: foregroundColor,
                         ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                       ),
-                      Expanded(
-                        child: IconButton(
-                          icon: Icon(
-                            playerState.isPlaying
-                                ? Icons.pause
-                                : Icons.play_arrow,
-                            color: foregroundColor,
+                      if (song.artist != null)
+                        Text(
+                          song.artist!,
+                          style: Theme.of(context).textTheme.bodyMedium
+                              ?.copyWith(color: secondaryColor),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      const SizedBox(height: 2),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: IconButton(
+                              tooltip: MaterialLocalizations.of(
+                                context,
+                              ).previousPageTooltip,
+                              icon: Icon(
+                                Icons.skip_previous,
+                                color: foregroundColor,
+                              ),
+                              visualDensity: VisualDensity.compact,
+                              onPressed: () {
+                                ref.read(playerProvider.notifier).previous();
+                              },
+                            ),
                           ),
-                          visualDensity: VisualDensity.compact,
-                          onPressed: () {
-                            ref.read(playerProvider.notifier).togglePlayPause();
-                          },
-                        ),
-                      ),
-                      Expanded(
-                        child: IconButton(
-                          icon: Icon(Icons.skip_next, color: foregroundColor),
-                          visualDensity: VisualDensity.compact,
-                          onPressed: () {
-                            ref.read(playerProvider.notifier).next();
-                          },
-                        ),
-                      ),
-                      Expanded(
-                        child: IconButton(
-                          icon: Icon(
-                            Icons.playlist_play,
-                            color: foregroundColor,
+                          Expanded(
+                            child: IconButton(
+                              tooltip: playerState.isPlaying
+                                  ? AppLocalizations.of(context).pause
+                                  : AppLocalizations.of(context).play,
+                              icon: Icon(
+                                playerState.isPlaying
+                                    ? Icons.pause
+                                    : Icons.play_arrow,
+                                color: foregroundColor,
+                              ),
+                              visualDensity: VisualDensity.compact,
+                              onPressed: () {
+                                ref
+                                    .read(playerProvider.notifier)
+                                    .togglePlayPause();
+                              },
+                            ),
                           ),
-                          visualDensity: VisualDensity.compact,
-                          onPressed: () {
-                            showModalBottomSheet(
-                              context: context,
-                              isScrollControlled: true,
-                              backgroundColor: Colors.transparent,
-                              builder: (_) => const PlaylistBottomSheet(),
-                            );
-                          },
-                        ),
+                          Expanded(
+                            child: IconButton(
+                              tooltip: MaterialLocalizations.of(
+                                context,
+                              ).nextPageTooltip,
+                              icon: Icon(
+                                Icons.skip_next,
+                                color: foregroundColor,
+                              ),
+                              visualDensity: VisualDensity.compact,
+                              onPressed: () {
+                                ref.read(playerProvider.notifier).next();
+                              },
+                            ),
+                          ),
+                          Expanded(
+                            child: IconButton(
+                              tooltip: AppLocalizations.of(context).playlist,
+                              icon: Icon(
+                                Icons.playlist_play,
+                                color: foregroundColor,
+                              ),
+                              visualDensity: VisualDensity.compact,
+                              onPressed: () {
+                                showModalBottomSheet(
+                                  context: context,
+                                  isScrollControlled: true,
+                                  backgroundColor: Colors.transparent,
+                                  builder: (_) => const PlaylistBottomSheet(),
+                                );
+                              },
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                   ),
-                ],
-              ),
+                ),
+                const SizedBox(width: 8),
+              ],
             ),
-            const SizedBox(width: 8),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 顶部细进度指示线：唯一订阅 position 的地方
+class _MiniProgressLine extends ConsumerWidget {
+  const _MiniProgressLine();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final position = ref.watch(playerProvider.select((s) => s.position));
+    final duration = ref.watch(playerProvider.select((s) => s.duration));
+    final progress = duration.inMilliseconds > 0
+        ? (position.inMilliseconds / duration.inMilliseconds).clamp(0.0, 1.0)
+        : 0.0;
+
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: FractionallySizedBox(
+        widthFactor: progress,
+        child: Container(
+          height: 2,
+          color: Theme.of(context).colorScheme.primary,
         ),
       ),
     );
