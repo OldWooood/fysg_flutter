@@ -7,16 +7,11 @@ import '../player/player_page.dart';
 import '../player/playlist_bottom_sheet.dart';
 import 'song_cover.dart';
 
-class MiniPlayer extends ConsumerStatefulWidget {
+class MiniPlayer extends ConsumerWidget {
   const MiniPlayer({super.key});
 
   @override
-  ConsumerState<MiniPlayer> createState() => _MiniPlayerState();
-}
-
-class _MiniPlayerState extends ConsumerState<MiniPlayer> {
-  @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final playerState = ref.watch(playerMiniStateProvider);
     final song = playerState.currentSong;
 

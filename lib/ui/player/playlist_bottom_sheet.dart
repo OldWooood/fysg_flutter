@@ -14,8 +14,8 @@ class PlaylistBottomSheet extends ConsumerStatefulWidget {
 
 class _PlaylistBottomSheetState extends ConsumerState<PlaylistBottomSheet> {
   final ItemScrollController _itemScrollController = ItemScrollController();
-  final ItemPositionsListener _itemPositionsListener =
-      ItemPositionsListener.create();
+  // 注：ItemPositionsListener 仅在需要读取可视区间时创建；
+  // 此处列表只做 jumpTo，无需监听，故不创建，避免持有监听器。
 
   @override
   void initState() {
@@ -73,7 +73,6 @@ class _PlaylistBottomSheetState extends ConsumerState<PlaylistBottomSheet> {
                 ? Center(child: Text(AppLocalizations.of(context).noResults))
                 : ScrollablePositionedList.builder(
                     itemScrollController: _itemScrollController,
-                    itemPositionsListener: _itemPositionsListener,
                     itemCount: queue.length,
                     itemBuilder: (context, index) {
                       final song = queue[index];

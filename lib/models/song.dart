@@ -1,3 +1,5 @@
+import '../utils/constants.dart';
+
 class Song {
   final int id;
   final String name;
@@ -19,23 +21,39 @@ class Song {
 
   factory Song.fromJson(
     Map<String, dynamic> json, {
-    String assetBase = 'https://www.fysg.org',
+    String assetBase = AppConstants.assetBaseUrl,
   }) {
-    // FYSG API structure adaptation
-
+    // FYSG API structure adaptation (defensive: dirty data must not crash)
     String? artistName;
-    if (json['authors'] != null && (json['authors'] as List).isNotEmpty) {
-      artistName = json['authors'][0]['name'];
-    } else if (json['author'] != null) {
-      // sometimes it's direct object
-      artistName = json['author']['name'];
+    try {
+      final authors = json['authors'];
+      if (authors is List && authors.isNotEmpty) {
+        final first = authors[0];
+        if (first is Map && first['name'] != null) {
+          artistName = '${first['name']}';
+        }
+      } else if (json['author'] is Map) {
+        final author = json['author'] as Map;
+        if (author['name'] != null) artistName = '${author['name']}';
+      } else if (json['artist'] != null) {
+        artistName = '${json['artist']}';
+      }
+    } catch (_) {
+      artistName = null;
     }
 
     String? albumName;
     String? coverUrl;
-    if (json['album'] != null) {
-      albumName = json['album']['name'];
-      coverUrl = json['album']['cover'];
+    try {
+      final album = json['album'];
+      if (album is Map) {
+        if (album['name'] != null) albumName = '${album['name']}';
+        if (album['cover'] != null) coverUrl = '${album['cover']}';
+      } else if (json['cover'] != null) {
+        coverUrl = '${json['cover']}';
+      }
+    } catch (_) {
+      // keep nulls
     }
 
     // Fix cover URL if it's relative
@@ -43,7 +61,13 @@ class Song {
       coverUrl = '$assetBase$coverUrl';
     }
 
-    String? audioUrl = json['url'];
+    String? audioUrl;
+    try {
+      final rawUrl = json['url'];
+      if (rawUrl != null) audioUrl = '$rawUrl';
+    } catch (_) {
+      audioUrl = null;
+    }
     if (audioUrl != null && !audioUrl.startsWith('http')) {
       // Browser analysis shows audio files reside in /song_high/ directory
       // relative to the asset base. Images do not.
@@ -60,10 +84,14 @@ class Song {
         int.tryParse('${json['id'] ?? json['audioId'] ?? 0}') ?? 0;
     final int parsedId = songId != 0 ? songId : fallbackId;
 
+    final rawName = json['name'];
+    final name = rawName == null ? '' : '$rawName';
+
     return Song(
       id: parsedId,
-      name: json['name'] ?? 'Unknown Title',
-      artist: artistName ?? 'Unknown Artist',
+      // artist 为空时由 UI 层用 l10n.unknownArtist 兜底，不在此硬编码英文
+      name: name,
+      artist: (artistName == null || artistName.isEmpty) ? null : artistName,
       album: albumName,
       cover: coverUrl,
       url: audioUrl,
@@ -72,15 +100,22 @@ class Song {
   }
 
   factory Song.fromManifest(Map<String, dynamic> json) {
-    return Song(
-      id: json['id'],
-      name: json['name'],
-      artist: json['artist'],
-      album: json['album'],
-      cover: json['cover'],
-      url: json['url'],
-      lyrics: json['lyrics'],
-    );
+    try {
+      final idRaw = json['id'];
+      final id = idRaw is int ? idRaw : int.tryParse('$idRaw') ?? 0;
+      final nameRaw = json['name'];
+      return Song(
+        id: id,
+        name: nameRaw == null ? '' : '$nameRaw',
+        artist: json['artist'] == null ? null : '${json['artist']}',
+        album: json['album'] == null ? null : '${json['album']}',
+        cover: json['cover'] == null ? null : '${json['cover']}',
+        url: json['url'] == null ? null : '${json['url']}',
+        lyrics: json['lyrics'] == null ? null : '${json['lyrics']}',
+      );
+    } catch (_) {
+      return Song(id: 0, name: '');
+    }
   }
 
   Map<String, dynamic> toJson() {

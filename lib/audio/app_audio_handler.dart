@@ -23,6 +23,11 @@ class AppAudioHandler extends BaseAudioHandler with SeekHandler {
     _delegate = delegate;
   }
 
+  /// 与 attach 对应：PlayerNotifier.dispose 时解绑，避免静态单例持有已释放对象
+  void detachDelegate(AppAudioHandlerDelegate delegate) {
+    if (_delegate == delegate) _delegate = null;
+  }
+
   @override
   Future<void> play() async => _delegate?.onPlay();
 
@@ -41,13 +46,16 @@ class AppAudioHandler extends BaseAudioHandler with SeekHandler {
   @override
   Future<void> stop() async => _delegate?.onStop();
 
-  Future<void> setNowPlaying(Song? song) async {
+  Future<void> setNowPlaying(Song? song, {String unknownArtist = 'Unknown Artist'}) async {
     if (song == null) return;
     mediaItem.add(
       MediaItem(
         id: '${song.id}',
-        title: song.name,
-        artist: song.artist ?? 'Unknown Artist',
+        title: song.name.isEmpty ? unknownArtist : song.name,
+        // artist 为空时由调用方传入本地化文案，默认英文兜底（无 BuildContext 处）
+        artist: (song.artist == null || song.artist!.isEmpty)
+            ? unknownArtist
+            : song.artist,
         album: song.album,
         artUri: song.cover == null ? null : Uri.tryParse(song.cover!),
         // 封面 CDN 需要带请求头才能加载

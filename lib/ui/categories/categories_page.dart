@@ -181,7 +181,7 @@ class _CategoryGridState extends ConsumerState<_CategoryGrid> {
 
     return MasonryGridView.count(
       controller: _scrollController,
-      cacheExtent: 800,
+      cacheExtent: AppConstants.listCacheExtent,
       padding: const EdgeInsets.all(16),
       crossAxisCount: 2,
       mainAxisSpacing: 16,
@@ -229,6 +229,9 @@ class _CategoryGridState extends ConsumerState<_CategoryGrid> {
                                 image: CachedNetworkImageProvider(
                                   item.cover!,
                                   headers: ImageCacheService.headers,
+                                  // 网格小图按 ~200px 解码，避免全分辨率解码 OOM
+                                  maxWidth: 400,
+                                  maxHeight: 400,
                                 ),
                                 fit: BoxFit.cover,
                               )

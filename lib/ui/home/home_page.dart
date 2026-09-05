@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../l10n/app_localizations.dart';
@@ -105,7 +106,9 @@ class _HomePageState extends ConsumerState<HomePage> {
 
     return CustomScrollView(
       controller: _scrollController,
-      cacheExtent: 800,
+      scrollCacheExtent: ScrollCacheExtent.pixels(
+        AppConstants.listCacheExtent,
+      ),
       slivers: [
         // Recently Played Section
         SliverToBoxAdapter(

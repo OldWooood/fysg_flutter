@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -15,7 +14,9 @@ import '../api/recently_played_service.dart'
 import '../audio/app_audio_handler.dart';
 import '../models/song.dart';
 import '../utils/constants.dart';
+import 'queue_persistence.dart';
 import 'shared_preferences_provider.dart';
+import 'song_resolver.dart';
 
 final fysgServiceProvider = Provider((ref) {
   final service = FysgService();
@@ -46,16 +47,12 @@ final playerQueueStateProvider =
       );
     });
 
-final playerProvider = StateNotifierProvider<PlayerNotifier, FysgPlayerState>((
-  ref,
-) {
-  return PlayerNotifier(
-    ref,
-    ref.watch(fysgServiceProvider),
-    ref.watch(downloadServiceProvider),
-    ref.watch(recentlyPlayedServiceProvider),
-  );
-});
+// Riverpod 3：StateNotifierProvider/StateNotifier 已移除，改用 NotifierProvider。
+// 依赖改在 build() 内用 ref.watch 获取（实例在 build 重跑时保留，仅 state 会重置；
+// 下方 service 均为稳定单例，不会触发重跑）。
+final playerProvider = NotifierProvider<PlayerNotifier, FysgPlayerState>(
+  PlayerNotifier.new,
+);
 
 enum PlaybackMode { sequence, shuffle, single }
 
@@ -103,13 +100,12 @@ class FysgPlayerState {
   }
 }
 
-class PlayerNotifier extends StateNotifier<FysgPlayerState>
+class PlayerNotifier extends Notifier<FysgPlayerState>
     implements AppAudioHandlerDelegate {
-  final Ref _ref;
   final AudioPlayer _audioPlayer = AudioPlayer();
-  final FysgService _service;
-  final DownloadService _downloadService;
-  final RecentlyPlayedService _recentService;
+  late final FysgService _service;
+  late final DownloadService _downloadService;
+  late final RecentlyPlayedService _recentService;
   final Map<int, Song> _songDetailsCache = {};
   final Set<int> _songDetailsLoading = {};
   int _queueBuildToken = 0;
@@ -123,6 +119,9 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState>
   bool _queueStateRestored = false;
   int? _lastHistorySongId;
   DateTime _lastPositionPersist = DateTime.now();
+  int _consecutiveAutoSkips = 0;
+  late final QueuePersistence _persistence;
+  static const _songResolver = SongResolver();
 
   /// 冷启动恢复队列时待使用的续播位置，
   /// 在队列展开完成、真正加载音源时一次性消费
@@ -134,14 +133,33 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState>
   // Stream 订阅管理，防止内存泄漏
   final List<StreamSubscription> _subscriptions = [];
   bool _isDisposed = false;
+  bool _initialized = false;
 
-  PlayerNotifier(
-    this._ref,
-    this._service,
-    this._downloadService,
-    this._recentService,
-  ) : super(const FysgPlayerState()) {
-    _init();
+  @override
+  FysgPlayerState build() {
+    _service = ref.watch(fysgServiceProvider);
+    _downloadService = ref.watch(downloadServiceProvider);
+    _recentService = ref.watch(recentlyPlayedServiceProvider);
+    _persistence = QueuePersistence(ref);
+    // build 重跑时实例保留：只初始化一次，避免重复订阅/恢复队列
+    if (!_initialized) {
+      _initialized = true;
+      _init();
+      // Notifier 没有可 override 的 dispose（同步），cancel 的 Future 无法 await，
+      // 用 unawaited 显式标记“故意不等待”；同时解绑音频通知 delegate，
+      // 防止静态单例持有已释放对象。
+      ref.onDispose(() {
+        _isDisposed = true;
+        for (final subscription in _subscriptions) {
+          unawaited(subscription.cancel());
+        }
+        _subscriptions.clear();
+        AppAudioService.handler?.detachDelegate(this);
+        _persistence.dispose();
+        unawaited(_audioPlayer.dispose());
+      });
+    }
+    return const FysgPlayerState();
   }
 
   bool get _mounted => !_isDisposed;
@@ -187,6 +205,7 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState>
           if (_suppressIndexSync) return;
           if (index != null && index < state.queue.length && _mounted) {
             _songLoadRetryCount[state.queue[index].id] = 0;
+            _consecutiveAutoSkips = 0;
             _lastPrefetchSongId = null;
             final song = state.queue[index];
             if (state.currentIndex != index) {
@@ -244,17 +263,10 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState>
       ),
     );
 
-    _subscriptions.add(
-      _audioPlayer.playbackEventStream.listen(
-        (event) {
-          // Log playback events for debugging stalls
-        },
-        onError: (Object e, StackTrace st) {
-          debugPrint('Playback error: $e');
-          _handleSongLoadFailure('playback_event_error');
-        },
-      ),
-    );
+    // 注：之前这里有个空 playbackEventStream 监听只为 debug，
+    // just_audio 的 LoopMode 已处理 completed 自动下一首，无需手动监听；
+    // 真正的播放错误走 playerStateStream/各 onError + _handleSongLoadFailure。
+    // 如需排查卡顿，可临时加回带 debugPrint 的监听，不要提交空监听。
 
     await _restoreQueueState();
   }
@@ -291,6 +303,14 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState>
   Future<void> _handleSongLoadFailure(String reason) async {
     final currentSong = state.currentSong;
     if (currentSong == null) return;
+    // 单曲队列下无下一首可跳，避免 next(auto:true) 死循环跳歌
+    if (state.queue.length <= 1) {
+      debugPrint(
+        'Single-song queue, stop retry for ${currentSong.id}, reason: $reason',
+      );
+      _songLoadRetryCount[currentSong.id] = 0;
+      return;
+    }
 
     final retries = (_songLoadRetryCount[currentSong.id] ?? 0) + 1;
     _songLoadRetryCount[currentSong.id] = retries;
@@ -302,12 +322,22 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState>
       try {
         await _audioPlayer.seek(Duration.zero);
         await _audioPlayer.play();
+        _consecutiveAutoSkips = 0;
         return;
       } catch (e) {
         debugPrint('Retry failed for song ${currentSong.id}: $e');
       }
     }
 
+    // 连续自动跳歌熔断：重试耗尽的坏资源连续出现时停下来，而不是无限 next()
+    _consecutiveAutoSkips++;
+    if (_consecutiveAutoSkips > AppConstants.maxConsecutiveAutoSkips) {
+      debugPrint(
+        'Too many consecutive auto-skips ($_consecutiveAutoSkips), stop auto-next',
+      );
+      _songLoadRetryCount[currentSong.id] = 0;
+      return;
+    }
     debugPrint(
       'Skip song ${currentSong.id} after retries exhausted, reason: $reason',
     );
@@ -383,28 +413,17 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState>
     return true;
   }
 
-  @override
-  void dispose() {
-    _isDisposed = true;
-    // 取消所有 Stream 订阅
-    for (final subscription in _subscriptions) {
-      subscription.cancel();
-    }
-    _subscriptions.clear();
-    _audioPlayer.dispose();
-    super.dispose();
-  }
-
+  /// 同步 IO（existsSync）会阻塞 UI 线程，全部改为异步 exists()。
   Future<AudioSource> _createAudioSource(Song song) async {
     final prefetched = await _downloadService.getPrefetchFile(song.id);
-    if (prefetched.existsSync()) {
+    if (await prefetched.exists()) {
       _prefetchCachedIds.add(song.id);
       return AudioSource.file(prefetched.path);
     }
 
     final localFile = await _downloadService.getLocalFile(song.id);
 
-    if (localFile.existsSync()) {
+    if (await localFile.exists()) {
       return AudioSource.file(localFile.path);
     }
 
@@ -434,16 +453,17 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState>
           .then((_) {
             debugPrint('Downloaded ${song.name}');
             // 下载完成后刷新"已下载"列表
-            if (_mounted) _ref.invalidate(downloadedSongsProvider);
+            if (_mounted) ref.invalidate(downloadedSongsProvider);
           })
-          .catchError((e) {
+          .catchError((Object e) {
+            // 之前这里只 debugPrint，用户无感知；现打日志并可由 UI toast
             debugPrint('Download error: $e');
           });
 
       return DownloadResult.started;
     } catch (e) {
       debugPrint('Download error: $e');
-      return null;
+      return DownloadResult.failed;
     }
   }
 
@@ -514,7 +534,7 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState>
     if (_lastHistorySongId == song.id) return;
     _lastHistorySongId = song.id;
     _recentService.addSong(song);
-    _ref.invalidate(recentSongsProvider);
+    ref.invalidate(recentSongsProvider);
   }
 
   Future<void> restoreCachedQueue() async {
@@ -526,19 +546,11 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState>
     _queueStateRestored = true;
 
     // 使用通过 Riverpod 注入的 SharedPreferences 实例
-    final prefs = _ref.read(sharedPreferencesProvider);
+    final prefs = ref.read(sharedPreferencesProvider);
     final raw = prefs.getStringList(AppConstants.spQueueCacheKey);
     if (raw == null || raw.isEmpty) return;
 
-    final cachedSongs = <Song>[];
-    for (final item in raw) {
-      try {
-        final map = json.decode(item) as Map<String, dynamic>;
-        cachedSongs.add(Song.fromManifest(map));
-      } catch (_) {
-        // skip bad entries
-      }
-    }
+    final cachedSongs = decodeCachedQueue(raw);
     if (cachedSongs.isEmpty) return;
 
     final savedIndex = prefs.getInt(AppConstants.spQueueIndexKey) ?? 0;
@@ -577,26 +589,26 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState>
   }
 
   Future<void> _persistQueueCache() async {
-    final queue = state.queue;
-    if (queue.isEmpty || state.currentIndex < 0) return;
-    final prefs = _ref.read(sharedPreferencesProvider);
-    final encoded = queue.map((s) => json.encode(s.toJson())).toList();
-    await prefs.setStringList(AppConstants.spQueueCacheKey, encoded);
+    if (state.queue.isEmpty || state.currentIndex < 0) return;
+    _persistence.schedulePersistQueueCache(state.queue);
   }
 
   Future<void> _persistPlaybackState({bool includePosition = false}) async {
-    final queue = state.queue;
-    if (queue.isEmpty || state.currentIndex < 0) return;
-    final prefs = _ref.read(sharedPreferencesProvider);
-    await prefs.setInt(AppConstants.spQueueIndexKey, state.currentIndex);
+    if (state.queue.isEmpty || state.currentIndex < 0) return;
     if (includePosition) {
-      await prefs.setInt(
-        AppConstants.spQueuePositionKey,
-        state.position.inMilliseconds,
+      // 含位置的关键写立即落盘；纯 index 写走防抖
+      await _persistence.persistPlaybackStateNow(
+        currentIndex: state.currentIndex,
+        currentSongId: state.currentSong?.id,
+        positionMs: state.position.inMilliseconds,
+        includePosition: true,
       );
-    }
-    if (state.currentSong != null) {
-      await prefs.setInt(AppConstants.spQueueSongIdKey, state.currentSong!.id);
+    } else {
+      _persistence.schedulePersistPlaybackState(
+        currentIndex: state.currentIndex,
+        currentSongId: state.currentSong?.id,
+        positionMs: state.position.inMilliseconds,
+      );
     }
   }
 
@@ -798,30 +810,10 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState>
     );
   }
 
-  Song _mergeSong(Song base, Song details) {
-    final detailsLyrics = details.lyrics;
-    return Song(
-      id: base.id,
-      name: details.name.isNotEmpty ? details.name : base.name,
-      artist: details.artist ?? base.artist,
-      album: details.album ?? base.album,
-      cover: details.cover ?? base.cover,
-      url: details.url ?? base.url,
-      lyrics: (detailsLyrics != null && detailsLyrics.isNotEmpty)
-          ? detailsLyrics
-          : base.lyrics,
-    );
-  }
+  Song _mergeSong(Song base, Song details) =>
+      _songResolver.mergeSong(base, details);
 
-  bool _isSameSong(Song a, Song b) {
-    return a.id == b.id &&
-        a.name == b.name &&
-        a.artist == b.artist &&
-        a.album == b.album &&
-        a.cover == b.cover &&
-        a.url == b.url &&
-        a.lyrics == b.lyrics;
-  }
+  bool _isSameSong(Song a, Song b) => _songResolver.isSameSong(a, b);
 
   Future<void> _maybePersistPosition() async {
     if (!_audioPlayer.playing) return;
@@ -905,6 +897,12 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState>
     if (currentSong != null) {
       _songLoadRetryCount[currentSong.id] = 0;
     }
+    if (state.queue.length <= 1) {
+      // 单曲队列下 seekToNext 无意义，直接重播当前
+      _audioPlayer.seek(Duration.zero);
+      if (auto) _audioPlayer.play();
+      return;
+    }
     if (auto && state.mode == PlaybackMode.single && state.queue.length > 1) {
       final nextIndex = (state.currentIndex + 1) % state.queue.length;
       _audioPlayer.seek(Duration.zero, index: nextIndex);
@@ -919,4 +917,4 @@ class PlayerNotifier extends StateNotifier<FysgPlayerState>
   }
 }
 
-enum DownloadResult { started, alreadyDownloaded }
+enum DownloadResult { started, alreadyDownloaded, failed }

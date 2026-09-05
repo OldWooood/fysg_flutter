@@ -117,77 +117,63 @@ class AppLocalizations {
     },
   };
 
-  String get home => _localizedValues[locale.languageCode]!['home']!;
-  String get browse => _localizedValues[locale.languageCode]!['browse']!;
-  String get search => _localizedValues[locale.languageCode]!['search']!;
-  String get mine => _localizedValues[locale.languageCode]!['mine']!;
-  String get appTitle => _localizedValues[locale.languageCode]!['app_title']!;
-  String get recommended =>
-      _localizedValues[locale.languageCode]!['recommended']!;
-  String get recentlyPlayed =>
-      _localizedValues[locale.languageCode]!['recently_played']!;
-  String get seeAll => _localizedValues[locale.languageCode]!['see_all']!;
-  String get history => _localizedValues[locale.languageCode]!['history']!;
-  String get downloaded =>
-      _localizedValues[locale.languageCode]!['downloaded']!;
-  String get playAll => _localizedValues[locale.languageCode]!['play_all']!;
-  String get noHistory => _localizedValues[locale.languageCode]!['no_history']!;
-  String get noDownloads =>
-      _localizedValues[locale.languageCode]!['no_downloads']!;
-  String get noLyrics => _localizedValues[locale.languageCode]!['no_lyrics']!;
-  String get searchHint =>
-      _localizedValues[locale.languageCode]!['search_hint']!;
-  String get categories =>
-      _localizedValues[locale.languageCode]!['categories']!;
-  String get albums => _localizedValues[locale.languageCode]!['albums']!;
-  String get playlists => _localizedValues[locale.languageCode]!['playlists']!;
-  String get authors => _localizedValues[locale.languageCode]!['authors']!;
-  String get books => _localizedValues[locale.languageCode]!['books']!;
-  String get songTab => _localizedValues[locale.languageCode]!['song_tab']!;
-  String get lyricsTab => _localizedValues[locale.languageCode]!['lyrics_tab']!;
-  String get searchAction =>
-      _localizedValues[locale.languageCode]!['search_action']!;
-  String get noResults => _localizedValues[locale.languageCode]!['no_results']!;
-  String get searchHistory =>
-      _localizedValues[locale.languageCode]!['search_history']!;
-  String get clearHistory =>
-      _localizedValues[locale.languageCode]!['clear_history']!;
-  String get downloadStarted =>
-      _localizedValues[locale.languageCode]!['download_started']!;
-  String get alreadyDownloaded =>
-      _localizedValues[locale.languageCode]!['already_downloaded']!;
-  String get loop => _localizedValues[locale.languageCode]!['loop']!;
-  String get download => _localizedValues[locale.languageCode]!['download']!;
-  String get playlist => _localizedValues[locale.languageCode]!['playlist']!;
-  String get loopOrder => _localizedValues[locale.languageCode]!['loop_order']!;
-  String get loopShuffle =>
-      _localizedValues[locale.languageCode]!['loop_shuffle']!;
-  String get loopSingle =>
-      _localizedValues[locale.languageCode]!['loop_single']!;
-  String get favorites => _localizedValues[locale.languageCode]!['favorites']!;
-  String get favoritePlaylist =>
-      _localizedValues[locale.languageCode]!['favorite_playlist']!;
-  String get favorited => _localizedValues[locale.languageCode]!['favorited']!;
-  String get addFavorite =>
-      _localizedValues[locale.languageCode]!['add_favorite']!;
-  String get removeFavorite =>
-      _localizedValues[locale.languageCode]!['remove_favorite']!;
-  String get noFavorites =>
-      _localizedValues[locale.languageCode]!['no_favorites']!;
-  String get retry => _localizedValues[locale.languageCode]!['retry']!;
-  String get loadFailed =>
-      _localizedValues[locale.languageCode]!['load_failed']!;
-  String get unknown => _localizedValues[locale.languageCode]!['unknown']!;
-  String get unknownArtist =>
-      _localizedValues[locale.languageCode]!['unknown_artist']!;
-  String get searchEmptyHint =>
-      _localizedValues[locale.languageCode]!['search_empty_hint']!;
-  String get share => _localizedValues[locale.languageCode]!['share']!;
-  String get speed => _localizedValues[locale.languageCode]!['speed']!;
-  String get play => _localizedValues[locale.languageCode]!['play']!;
-  String get pause => _localizedValues[locale.languageCode]!['pause']!;
-  String shareTextSong(String song) =>
-      '${_localizedValues[locale.languageCode]!['share_text_song']!}$song';
+  static String _get(Locale locale, String key) {
+    // 未知语言回退到英文，避免 `!` 强解崩溃（如 zh_Hant / ja 等系统语言）
+    final table =
+        _localizedValues[locale.languageCode] ?? _localizedValues['en']!;
+    return table[key] ?? _localizedValues['en']![key] ?? key;
+  }
+
+  String get home => _get(locale, 'home');
+  String get browse => _get(locale, 'browse');
+  String get search => _get(locale, 'search');
+  String get mine => _get(locale, 'mine');
+  String get appTitle => _get(locale, 'app_title');
+  String get recommended => _get(locale, 'recommended');
+  String get recentlyPlayed => _get(locale, 'recently_played');
+  String get seeAll => _get(locale, 'see_all');
+  String get history => _get(locale, 'history');
+  String get downloaded => _get(locale, 'downloaded');
+  String get playAll => _get(locale, 'play_all');
+  String get noHistory => _get(locale, 'no_history');
+  String get noDownloads => _get(locale, 'no_downloads');
+  String get noLyrics => _get(locale, 'no_lyrics');
+  String get searchHint => _get(locale, 'search_hint');
+  String get categories => _get(locale, 'categories');
+  String get albums => _get(locale, 'albums');
+  String get playlists => _get(locale, 'playlists');
+  String get authors => _get(locale, 'authors');
+  String get books => _get(locale, 'books');
+  String get songTab => _get(locale, 'song_tab');
+  String get lyricsTab => _get(locale, 'lyrics_tab');
+  String get searchAction => _get(locale, 'search_action');
+  String get noResults => _get(locale, 'no_results');
+  String get searchHistory => _get(locale, 'search_history');
+  String get clearHistory => _get(locale, 'clear_history');
+  String get downloadStarted => _get(locale, 'download_started');
+  String get alreadyDownloaded => _get(locale, 'already_downloaded');
+  String get loop => _get(locale, 'loop');
+  String get download => _get(locale, 'download');
+  String get playlist => _get(locale, 'playlist');
+  String get loopOrder => _get(locale, 'loop_order');
+  String get loopShuffle => _get(locale, 'loop_shuffle');
+  String get loopSingle => _get(locale, 'loop_single');
+  String get favorites => _get(locale, 'favorites');
+  String get favoritePlaylist => _get(locale, 'favorite_playlist');
+  String get favorited => _get(locale, 'favorited');
+  String get addFavorite => _get(locale, 'add_favorite');
+  String get removeFavorite => _get(locale, 'remove_favorite');
+  String get noFavorites => _get(locale, 'no_favorites');
+  String get retry => _get(locale, 'retry');
+  String get loadFailed => _get(locale, 'load_failed');
+  String get unknown => _get(locale, 'unknown');
+  String get unknownArtist => _get(locale, 'unknown_artist');
+  String get searchEmptyHint => _get(locale, 'search_empty_hint');
+  String get share => _get(locale, 'share');
+  String get speed => _get(locale, 'speed');
+  String get play => _get(locale, 'play');
+  String get pause => _get(locale, 'pause');
+  String shareTextSong(String song) => '${_get(locale, 'share_text_song')}$song';
 }
 
 class AppLocalizationsDelegate extends LocalizationsDelegate<AppLocalizations> {

@@ -10,9 +10,45 @@ import '../utils/result.dart';
 
 class FysgService {
   static final Uri _apiBaseUri = Uri.parse(AppConstants.apiBaseUrl);
-  static final String _commonParams =
-      '_app=${AppConstants.apiAppName}&_device=${AppConstants.apiDevice}'
-      '&_version=${AppConstants.apiVersion}&_deviceId=&_cvr=0';
+
+  Map<String, String> get _commonQueryParams => {
+    '_app': AppConstants.apiAppName,
+    '_device': AppConstants.apiDevice,
+    '_version': AppConstants.apiVersion,
+    '_deviceId': '',
+    '_cvr': '0',
+  };
+
+  Uri _buildUri(String path, [Map<String, String>? extra]) {
+    return Uri.https(_apiBaseUri.host, path, {
+      ..._commonQueryParams,
+      ...?extra,
+    });
+  }
+
+  Future<http.Response> _get(Uri uri) {
+    return _client
+        .get(uri, headers: AppConstants.defaultHeaders)
+        .timeout(
+          AppConstants.networkTimeout,
+          onTimeout: () => throw AppError.network('请求超时，请检查网络后重试'),
+        );
+  }
+
+  /// 统一状态码映射：之前仅分 200/>=500/else，401/404/429 全归“请求失败”
+  Never _throwForStatus(int statusCode, String action) {
+    if (statusCode == 401 || statusCode == 403) {
+      throw AppError.network('访问被拒绝($statusCode)，请稍后重试');
+    } else if (statusCode == 404) {
+      throw AppError.notFound(action);
+    } else if (statusCode == 429) {
+      throw AppError.network('请求过于频繁，请稍后重试');
+    } else if (statusCode >= 500) {
+      throw AppError.network('服务器错误: $statusCode');
+    } else {
+      throw AppError.network('请求失败: $statusCode');
+    }
+  }
 
   final Map<int, Song> _songDetailsCache = {};
   final Map<int, Future<Song>> _songDetailsInFlight = {};
@@ -82,27 +118,13 @@ class FysgService {
     String query,
     int size,
   ) async {
-    final queryParams = {
+    final uri = _buildUri('/api/app/songs-random-name', {
       'name': query,
       'size': size.toString(),
-      '_app': AppConstants.apiAppName,
-      '_device': AppConstants.apiDevice,
-      '_version': AppConstants.apiVersion,
-      '_deviceId': '',
-      '_cvr': '0',
-    };
-
-    final uri = Uri.https(
-      _apiBaseUri.host,
-      '/api/app/songs-random-name',
-      queryParams,
-    );
+    });
 
     try {
-      final response = await _client.get(
-        uri,
-        headers: AppConstants.defaultHeaders,
-      );
+      final response = await _get(uri);
 
       if (response.statusCode == 200) {
         final jsonResponse = json.decode(utf8.decode(response.bodyBytes));
@@ -119,10 +141,8 @@ class FysgService {
           }
         }
         return [];
-      } else if (response.statusCode >= 500) {
-        throw AppError.network('服务器错误: ${response.statusCode}');
       } else {
-        throw AppError.network('请求失败: ${response.statusCode}');
+        _throwForStatus(response.statusCode, '搜索建议');
       }
     } on AppError {
       rethrow;
@@ -173,24 +193,14 @@ class FysgService {
   }
 
   Future<List<Song>> _fetchSearchSongs(String query, int page, int size) async {
-    final queryParams = {
+    final uri = _buildUri('/api/app/songs', {
       'name': query,
       'page': page.toString(),
       'size': size.toString(),
-      '_app': AppConstants.apiAppName,
-      '_device': AppConstants.apiDevice,
-      '_version': AppConstants.apiVersion,
-      '_deviceId': '',
-      '_cvr': '0',
-    };
-
-    final uri = Uri.https(_apiBaseUri.host, '/api/app/songs', queryParams);
+    });
 
     try {
-      final response = await _client.get(
-        uri,
-        headers: AppConstants.defaultHeaders,
-      );
+      final response = await _get(uri);
 
       if (response.statusCode == 200) {
         final jsonResponse = json.decode(utf8.decode(response.bodyBytes));
@@ -213,10 +223,8 @@ class FysgService {
           }
         }
         return [];
-      } else if (response.statusCode >= 500) {
-        throw AppError.network('服务器错误: ${response.statusCode}');
       } else {
-        throw AppError.network('请求失败: ${response.statusCode}');
+        _throwForStatus(response.statusCode, '搜索歌曲');
       }
     } on AppError {
       rethrow;
@@ -265,14 +273,12 @@ class FysgService {
   Future<List<Song>> _fetchRecommendedSongs(int page, int size) async {
     try {
       // Using "Top Played Monthly" as recommendation
-      final uri = Uri.parse(
-        '${_apiBaseUri.scheme}://${_apiBaseUri.host}/api/app/songs?'
-        'page=$page&size=$size&sort=playM&$_commonParams',
-      );
-      final response = await _client.get(
-        uri,
-        headers: AppConstants.defaultHeaders,
-      );
+      final uri = _buildUri('/api/app/songs', {
+        'page': page.toString(),
+        'size': size.toString(),
+        'sort': 'playM',
+      });
+      final response = await _get(uri);
 
       if (response.statusCode == 200) {
         final jsonResponse = json.decode(utf8.decode(response.bodyBytes));
@@ -288,10 +294,8 @@ class FysgService {
           }
         }
         return [];
-      } else if (response.statusCode >= 500) {
-        throw AppError.network('服务器错误: ${response.statusCode}');
       } else {
-        throw AppError.network('请求失败: ${response.statusCode}');
+        _throwForStatus(response.statusCode, '推荐歌曲');
       }
     } on AppError {
       rethrow;
@@ -341,16 +345,14 @@ class FysgService {
 
   Future<Song> _fetchSongDetails(int songId) async {
     try {
-      final uri = Uri.parse(
-        '${_apiBaseUri.scheme}://${_apiBaseUri.host}/api/app/songs/$songId?$_commonParams',
-      );
-      final response = await _client.get(
-        uri,
-        headers: AppConstants.defaultHeaders,
-      );
+      final uri = _buildUri('/api/app/songs/$songId');
+      final response = await _get(uri);
 
+      if (response.statusCode == 404) {
+        throw AppError.notFound('歌曲 $songId');
+      }
       if (response.statusCode != 200) {
-        throw AppError.network('获取歌曲详情失败: ${response.statusCode}');
+        _throwForStatus(response.statusCode, '歌曲详情');
       }
 
       final jsonResponse = json.decode(utf8.decode(response.bodyBytes));
@@ -383,14 +385,11 @@ class FysgService {
     String type = 'playlist',
   }) async {
     try {
-      final uri = Uri.parse(
-        '${_apiBaseUri.scheme}://${_apiBaseUri.host}/api/app/$endpoint?'
-        'page=$page&size=$size&$_commonParams',
-      );
-      final response = await _client.get(
-        uri,
-        headers: AppConstants.defaultHeaders,
-      );
+      final uri = _buildUri('/api/app/$endpoint', {
+        'page': page.toString(),
+        'size': size.toString(),
+      });
+      final response = await _get(uri);
 
       if (response.statusCode == 200) {
         final jsonResponse = json.decode(utf8.decode(response.bodyBytes));
@@ -405,10 +404,8 @@ class FysgService {
           }
         }
         return Result.ok(const []);
-      } else if (response.statusCode >= 500) {
-        return Result.err(AppError.network('服务器错误: ${response.statusCode}'));
       } else {
-        return Result.err(AppError.network('请求失败: ${response.statusCode}'));
+        _throwForStatus(response.statusCode, endpoint);
       }
     } on AppError catch (e) {
       return Result.err(e);
@@ -443,25 +440,24 @@ class FysgService {
     int page = AppConstants.defaultPage,
     int size = AppConstants.defaultPageSize,
   }) async {
-    String param = '';
+    String paramKey;
+    String paramValue = '$id';
 
     if (type == 'album') {
-      param = 'album=$id';
+      paramKey = 'album';
     } else if (type == 'playlist') {
-      param = 'playlist=$id';
+      paramKey = 'playlist';
     } else {
       return Result.ok(const []);
     }
 
     try {
-      final uri = Uri.parse(
-        '${_apiBaseUri.scheme}://${_apiBaseUri.host}/api/app/songs?'
-        '$param&page=$page&size=$size&$_commonParams',
-      );
-      final response = await _client.get(
-        uri,
-        headers: AppConstants.defaultHeaders,
-      );
+      final uri = _buildUri('/api/app/songs', {
+        paramKey: paramValue,
+        'page': page.toString(),
+        'size': size.toString(),
+      });
+      final response = await _get(uri);
 
       if (response.statusCode == 200) {
         final jsonResponse = json.decode(utf8.decode(response.bodyBytes));
@@ -481,10 +477,8 @@ class FysgService {
           }
         }
         return Result.ok(const []);
-      } else if (response.statusCode >= 500) {
-        return Result.err(AppError.network('服务器错误: ${response.statusCode}'));
       } else {
-        return Result.err(AppError.network('请求失败: ${response.statusCode}'));
+        _throwForStatus(response.statusCode, '歌单歌曲');
       }
     } on AppError catch (e) {
       return Result.err(e);

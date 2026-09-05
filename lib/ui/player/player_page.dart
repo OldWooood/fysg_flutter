@@ -12,6 +12,7 @@ import '../../api/image_cache_service.dart';
 import '../../l10n/app_localizations.dart';
 import '../../models/song.dart';
 import '../../providers/player_provider.dart';
+import '../../utils/constants.dart';
 import '../../utils/lyrics.dart';
 import '../../utils/toast_utils.dart';
 import '../common/song_cover.dart';
@@ -216,9 +217,23 @@ class _PlayerBackground extends StatefulWidget {
 }
 
 class _PlayerBackgroundState extends State<_PlayerBackground> {
+  // 有界 LRU：之前是无界静态 Map，切歌越多内存越大
   static final _paletteCache = <String, Color>{};
+  static final _paletteOrder = <String>[];
   static const _fallbackColor = Color(0xFF20242E);
   Color _dominantColor = _fallbackColor;
+  int _extractToken = 0;
+
+  static void _putPalette(String url, Color color) {
+    _paletteCache.remove(url);
+    _paletteOrder.remove(url);
+    _paletteCache[url] = color;
+    _paletteOrder.add(url);
+    while (_paletteOrder.length > AppConstants.paletteCacheMaxEntries) {
+      final evicted = _paletteOrder.removeAt(0);
+      _paletteCache.remove(evicted);
+    }
+  }
 
   @override
   void initState() {
@@ -236,8 +251,9 @@ class _PlayerBackgroundState extends State<_PlayerBackground> {
   }
 
   Future<void> _extractPalette() async {
+    final token = ++_extractToken;
     final url = widget.coverUrl;
-    if (url == null) {
+    if (url == null || url.isEmpty) {
       if (mounted) setState(() => _dominantColor = _fallbackColor);
       return;
     }
@@ -247,16 +263,22 @@ class _PlayerBackgroundState extends State<_PlayerBackground> {
       return;
     }
     try {
+      // 用 200px 缩略图取色 + 减少颜色数，避免主 isolate 每换封面卡一帧；
+      // token 防止快速切歌时旧任务覆盖新封面颜色。
       final palette = await PaletteGenerator.fromImageProvider(
-        CachedNetworkImageProvider(url, headers: ImageCacheService.headers),
-        maximumColorCount: 16,
+        ResizeImage(
+          CachedNetworkImageProvider(url, headers: ImageCacheService.headers),
+          width: 200,
+        ),
+        maximumColorCount: 12,
       );
+      if (token != _extractToken || !mounted) return;
       final color =
           palette.vibrantColor?.color ??
           palette.mutedColor?.color ??
           palette.dominantColor?.color;
-      if (color != null && mounted) {
-        _paletteCache[url] = color;
+      if (color != null) {
+        _putPalette(url, color);
         setState(() => _dominantColor = color);
       }
     } catch (_) {
@@ -291,13 +313,32 @@ class _LyricsView extends ConsumerStatefulWidget {
   ConsumerState<_LyricsView> createState() => _LyricsViewState();
 }
 
-class _LyricsViewState extends ConsumerState<_LyricsView> {
+class _LyricsViewState extends ConsumerState<_LyricsView>
+    with WidgetsBindingObserver {
   final ItemScrollController _itemScrollController = ItemScrollController();
   final ItemPositionsListener _itemPositionsListener =
       ItemPositionsListener.create();
   bool _userScrolling = false;
   Timer? _scrollTimer;
   int _lastScrolledIndex = -1;
+  bool _scrollScheduled = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // 退后台时停止“用户手滑后恢复自动滚动”的 Timer，避免后台空转
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.detached) {
+      _scrollTimer?.cancel();
+      _scrollTimer = null;
+    }
+  }
 
   @override
   void didUpdateWidget(covariant _LyricsView oldWidget) {
@@ -314,8 +355,39 @@ class _LyricsViewState extends ConsumerState<_LyricsView> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _scrollTimer?.cancel();
+    _scrollTimer = null;
     super.dispose();
+  }
+
+  void _markUserScrolling() {
+    _userScrolling = true;
+    _scrollTimer?.cancel();
+  }
+
+  void _scheduleResumeAutoScroll() {
+    _scrollTimer?.cancel();
+    _scrollTimer = Timer(const Duration(seconds: 2), () {
+      if (mounted) _userScrolling = false;
+    });
+  }
+
+  /// build() 内只做调度，真正的 scrollTo 放到 post-frame，
+  /// 避免每 position tick 在 build 期间直接滚动（违反 build 纯函数 + 高频滚动）。
+  void _scheduleScrollToCurrentLine(int index) {
+    if (_userScrolling ||
+        index < 0 ||
+        index == _lastScrolledIndex ||
+        _scrollScheduled) {
+      return;
+    }
+    _scrollScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _scrollScheduled = false;
+      if (!mounted || _userScrolling) return;
+      _scrollToCurrentLine(index);
+    });
   }
 
   void _scrollToCurrentLine(int index) {
@@ -346,20 +418,33 @@ class _LyricsViewState extends ConsumerState<_LyricsView> {
 
     final currentIndex = findCurrentLyricIndex(widget.lyrics, position);
     if (currentIndex != -1 && widget.active) {
-      _scrollToCurrentLine(currentIndex);
+      _scheduleScrollToCurrentLine(currentIndex);
     }
 
-    return GestureDetector(
-      onTapDown: (_) {
-        _userScrolling = true;
-        _scrollTimer?.cancel();
-      },
-      onTapUp: (_) {
-        _scrollTimer = Timer(const Duration(seconds: 2), () {
-          if (mounted) _userScrolling = false;
-        });
-      },
-      child: ScrollablePositionedList.builder(
+    return Listener(
+      // 滑动手势（drag/pan）同样视为用户接管，而不只是 tap
+      onPointerDown: (_) => _markUserScrolling(),
+      onPointerUp: (_) => _scheduleResumeAutoScroll(),
+      onPointerCancel: (_) => _scheduleResumeAutoScroll(),
+      child: GestureDetector(
+        onTapDown: (_) => _markUserScrolling(),
+        onTapUp: (_) => _scheduleResumeAutoScroll(),
+        onVerticalDragStart: (_) => _markUserScrolling(),
+        onVerticalDragEnd: (_) => _scheduleResumeAutoScroll(),
+        onHorizontalDragStart: (_) => _markUserScrolling(),
+        onHorizontalDragEnd: (_) => _scheduleResumeAutoScroll(),
+        child: NotificationListener<ScrollNotification>(
+          onNotification: (notification) {
+            // 用户主动滚动时暂停自动跟随；滚动结束 2s 后恢复
+            if (notification is ScrollStartNotification &&
+                notification.dragDetails != null) {
+              _markUserScrolling();
+            } else if (notification is ScrollEndNotification) {
+              _scheduleResumeAutoScroll();
+            }
+            return false;
+          },
+          child: ScrollablePositionedList.builder(
         itemScrollController: _itemScrollController,
         itemPositionsListener: _itemPositionsListener,
         itemCount: widget.lyrics.length,
@@ -387,6 +472,8 @@ class _LyricsViewState extends ConsumerState<_LyricsView> {
             ),
           );
         },
+          ),
+        ),
       ),
     );
   }
@@ -477,9 +564,12 @@ class _ControlsSection extends ConsumerWidget {
         .downloadCurrentSong();
     if (result == null || !context.mounted) return;
 
-    final message = result == DownloadResult.started
-        ? AppLocalizations.of(context).downloadStarted
-        : AppLocalizations.of(context).alreadyDownloaded;
+    final l10n = AppLocalizations.of(context);
+    final message = switch (result) {
+      DownloadResult.started => l10n.downloadStarted,
+      DownloadResult.alreadyDownloaded => l10n.alreadyDownloaded,
+      DownloadResult.failed => l10n.loadFailed,
+    };
 
     ToastUtils.showToast(context, message);
   }
@@ -629,8 +719,16 @@ class _SeekbarState extends ConsumerState<_Seekbar> {
 
   @override
   Widget build(BuildContext context) {
-    final duration = ref.watch(playerProvider.select((s) => s.duration));
-    final position = ref.watch(playerProvider.select((s) => s.position));
+    // 秒级订阅：之前同时 watch position+duration，just_audio ~100ms 推一次导致
+    // 全量 rebuild；取秒后降为 1次/s，拖动期间用 _dragValue 本地值不被打断。
+    final durationSeconds = ref.watch(
+      playerProvider.select((s) => s.duration.inSeconds),
+    );
+    final positionSeconds = ref.watch(
+      playerProvider.select((s) => s.position.inSeconds),
+    );
+    final duration = Duration(seconds: durationSeconds);
+    final position = Duration(seconds: positionSeconds);
 
     final maxSeconds = duration.inSeconds > 0
         ? duration.inSeconds.toDouble()

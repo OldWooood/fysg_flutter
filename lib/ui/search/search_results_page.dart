@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../api/search_history_service.dart';
@@ -286,7 +287,9 @@ class _SearchResultsPageState extends ConsumerState<SearchResultsPage> {
                   ? Center(child: Text(AppLocalizations.of(context).noResults))
                   : ListView.builder(
                       controller: _scrollController,
-                      cacheExtent: 800,
+                      scrollCacheExtent: ScrollCacheExtent.pixels(
+                        AppConstants.listCacheExtent,
+                      ),
                       addAutomaticKeepAlives: false,
                       itemCount: _results.length + (_isLoadingMore ? 1 : 0),
                       itemBuilder: (context, index) {

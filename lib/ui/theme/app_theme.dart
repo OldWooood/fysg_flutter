@@ -1,20 +1,19 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 class AppTheme {
   static const _seedColor = Color(0xFF3949AB);
 
-  static ThemeData get lightTheme {
-    final colorScheme = ColorScheme.fromSeed(seedColor: _seedColor);
-    return _baseTheme(colorScheme, Brightness.light);
-  }
+  // 之前是 getter，每次访问都 ColorScheme.fromSeed 重建；改为 static final 缓存
+  static final ThemeData lightTheme = _baseTheme(
+    ColorScheme.fromSeed(seedColor: _seedColor),
+    Brightness.light,
+  );
 
-  static ThemeData get darkTheme {
-    final colorScheme = ColorScheme.fromSeed(
-      seedColor: _seedColor,
-      brightness: Brightness.dark,
-    );
-    return _baseTheme(colorScheme, Brightness.dark);
-  }
+  static final ThemeData darkTheme = _baseTheme(
+    ColorScheme.fromSeed(seedColor: _seedColor, brightness: Brightness.dark),
+    Brightness.dark,
+  );
 
   static ThemeData _baseTheme(ColorScheme colorScheme, Brightness brightness) {
     final onSurfaceHigh = brightness == Brightness.light

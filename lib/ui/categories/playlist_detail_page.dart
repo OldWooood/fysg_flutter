@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../api/favorite_playlist_service.dart';
@@ -122,7 +123,9 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
             Expanded(
               child: CustomScrollView(
                 controller: _scrollController,
-                cacheExtent: 800,
+                scrollCacheExtent: ScrollCacheExtent.pixels(
+                  AppConstants.listCacheExtent,
+                ),
                 slivers: [
                   SliverAppBar(
                     expandedHeight: 250,
@@ -147,6 +150,9 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
                                 imageUrl: widget.playlist.cover!,
                                 httpHeaders: ImageCacheService.headers,
                                 fit: BoxFit.cover,
+                                // 头图按显示尺寸解码，避免全分辨率 OOM
+                                memCacheWidth: 800,
+                                memCacheHeight: 500,
                               ),
                             )
                           : ColoredBox(
