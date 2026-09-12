@@ -62,6 +62,30 @@ class AppLocalizations {
       'share_text_song': 'Recommended a gospel song: ',
       'play': 'Play',
       'pause': 'Pause',
+      'empty_playlist': 'This playlist is empty',
+      'sleep_timer': 'Sleep timer',
+      'sleep_off': 'Off',
+      'sleep_15': '15 min',
+      'sleep_30': '30 min',
+      'sleep_60': '60 min',
+      'sleep_set': 'Sleep timer set',
+      'cancel': 'Cancel',
+      'confirm': 'Confirm',
+      'undo': 'Undo',
+      'clear_history_confirm': 'Clear all search history?',
+      'deleted': 'Deleted',
+      'theme': 'Theme',
+      'theme_system': 'System',
+      'theme_light': 'Light',
+      'theme_dark': 'Dark',
+      'error_timeout': 'Request timed out, check network and retry',
+      'error_rate_limited': 'Too many requests, try again later',
+      'error_forbidden': 'Access denied, try again later',
+      'error_server': 'Server error, try again later',
+      'error_network': 'Network failed, try again later',
+      'error_cache': 'Cache failed',
+      'download_failed': 'Download failed',
+      'download_progress': 'Downloading',
     },
     'zh': {
       'home': '首页',
@@ -114,6 +138,30 @@ class AppLocalizations {
       'share_text_song': '推荐一首福音诗歌：',
       'play': '播放',
       'pause': '暂停',
+      'empty_playlist': '这个歌单是空的',
+      'sleep_timer': '睡眠定时',
+      'sleep_off': '关闭',
+      'sleep_15': '15 分钟',
+      'sleep_30': '30 分钟',
+      'sleep_60': '60 分钟',
+      'sleep_set': '已设置睡眠定时',
+      'cancel': '取消',
+      'confirm': '确定',
+      'undo': '撤销',
+      'clear_history_confirm': '确定清空全部搜索历史？',
+      'deleted': '已删除',
+      'theme': '主题',
+      'theme_system': '跟随系统',
+      'theme_light': '浅色',
+      'theme_dark': '深色',
+      'error_timeout': '请求超时，请检查网络后重试',
+      'error_rate_limited': '请求过于频繁，请稍后重试',
+      'error_forbidden': '访问被拒绝，请稍后重试',
+      'error_server': '服务器错误，请稍后重试',
+      'error_network': '网络连接失败，请稍后重试',
+      'error_cache': '缓存操作失败',
+      'download_failed': '下载失败',
+      'download_progress': '下载中',
     },
   };
 
@@ -174,6 +222,26 @@ class AppLocalizations {
   String get play => _get(locale, 'play');
   String get pause => _get(locale, 'pause');
   String shareTextSong(String song) => '${_get(locale, 'share_text_song')}$song';
+  String get emptyPlaylist => _get(locale, 'empty_playlist');
+  String get sleepTimer => _get(locale, 'sleep_timer');
+  String get sleepOff => _get(locale, 'sleep_off');
+  String get cancel => _get(locale, 'cancel');
+  String get confirm => _get(locale, 'confirm');
+  String get undo => _get(locale, 'undo');
+  String get clearHistoryConfirm => _get(locale, 'clear_history_confirm');
+  String get deleted => _get(locale, 'deleted');
+  String get theme => _get(locale, 'theme');
+  String get themeSystem => _get(locale, 'theme_system');
+  String get themeLight => _get(locale, 'theme_light');
+  String get themeDark => _get(locale, 'theme_dark');
+  String get errorTimeout => _get(locale, 'error_timeout');
+  String get errorRateLimited => _get(locale, 'error_rate_limited');
+  String get errorForbidden => _get(locale, 'error_forbidden');
+  String get errorServer => _get(locale, 'error_server');
+  String get errorNetwork => _get(locale, 'error_network');
+  String get errorCache => _get(locale, 'error_cache');
+  String get downloadFailed => _get(locale, 'download_failed');
+  String errorNotFound(String resource) => '$resource${locale.languageCode == 'zh' ? '不存在' : ' not found'}';
 }
 
 class AppLocalizationsDelegate extends LocalizationsDelegate<AppLocalizations> {

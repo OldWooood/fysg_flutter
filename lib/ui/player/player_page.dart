@@ -40,7 +40,6 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
-    WakelockPlus.enable();
     _tabController.addListener(_onTabChanged);
     // 打开播放页时补齐当前歌曲详情（歌词等）
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -59,7 +58,6 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
 
   @override
   void dispose() {
-    WakelockPlus.disable();
     _tabController.removeListener(_onTabChanged);
     _tabController.dispose();
     super.dispose();
@@ -69,21 +67,31 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
   Widget build(BuildContext context) {
     final song = ref.watch(playerProvider.select((s) => s.currentSong));
     final lyrics = ref.watch(_lyricsCacheProvider(song?.lyrics));
+    // 息屏跟随播放状态：之前进页面 enable、出页面 disable，
+    // 后台仍在播也会被关掉。现只在播放时保持常亮。
+    ref.listen(playerProvider.select((s) => s.isPlaying), (_, isPlaying) {
+      if (isPlaying) {
+        WakelockPlus.enable();
+      } else {
+        WakelockPlus.disable();
+      }
+    });
 
     if (song == null) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
     return Scaffold(
-      backgroundColor: Colors.black,
+      // 主题感知背景：之前写死黑底，深色/浅色主题全失效
+      backgroundColor: Theme.of(context).colorScheme.surface,
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
         leading: IconButton(
           tooltip: MaterialLocalizations.of(context).closeButtonTooltip,
-          icon: const Icon(
+          icon: Icon(
             Icons.keyboard_arrow_down,
-            color: Colors.white,
+            color: Theme.of(context).colorScheme.onSurface,
             size: 30,
           ),
           onPressed: () => Navigator.of(context).pop(),
@@ -92,10 +100,12 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
       ),
       extendBodyBehindAppBar: true,
       body: GestureDetector(
-        // 下拉手势关闭播放页（歌词列表滚动时由其自行接管手势）
+        // 下拉关闭：阈值 600 过大且与歌词滚动打架，降到 300；
+        // 歌词页激活时不拦截，交由列表滚动接管
         onVerticalDragEnd: (details) {
+          if (_lyricsTabActive) return;
           final velocity = details.primaryVelocity ?? 0;
-          if (velocity > 600 && Navigator.of(context).canPop()) {
+          if (velocity > 300 && Navigator.of(context).canPop()) {
             Navigator.of(context).pop();
           }
         },
@@ -171,6 +181,9 @@ class _CoverView extends StatelessWidget {
                         fit: BoxFit.cover,
                         placeholderIcon: Icons.album,
                         placeholderIconSize: 56,
+                        // 大封面限 500px：之前全分辨率双解码（显示+取色）
+                        memCacheWidth: 500,
+                        memCacheHeight: 500,
                       ),
                     ),
                   ),
@@ -178,8 +191,12 @@ class _CoverView extends StatelessWidget {
                   Text(
                     song.name,
                     style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                      color: Colors.white,
-                      fontSize: titleFontSize,
+                      color: Theme.of(context).colorScheme.onSurface,
+                      fontSize:
+                          titleFontSize *
+                          MediaQuery.textScalerOf(
+                            context,
+                          ).scale(1.0).clamp(0.8, 1.4),
                       fontWeight: FontWeight.bold,
                     ),
                     textAlign: TextAlign.center,
@@ -189,9 +206,11 @@ class _CoverView extends StatelessWidget {
                   const SizedBox(height: 10),
                   Text(
                     song.artist ?? AppLocalizations.of(context).unknownArtist,
-                    style: Theme.of(
-                      context,
-                    ).textTheme.bodyMedium?.copyWith(color: Colors.white70),
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.onSurface.withValues(alpha: 0.7),
+                    ),
                     textAlign: TextAlign.center,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
@@ -263,14 +282,20 @@ class _PlayerBackgroundState extends State<_PlayerBackground> {
       return;
     }
     try {
-      // 用 200px 缩略图取色 + 减少颜色数，避免主 isolate 每换封面卡一帧；
+      // 用小缩略图取色 + 切歌后延迟到空闲帧，避免封面切换瞬间卡 1~3 帧；
       // token 防止快速切歌时旧任务覆盖新封面颜色。
+      await Future.delayed(const Duration(milliseconds: 300));
+      if (token != _extractToken || !mounted) return;
       final palette = await PaletteGenerator.fromImageProvider(
         ResizeImage(
-          CachedNetworkImageProvider(url, headers: ImageCacheService.headers),
-          width: 200,
+          CachedNetworkImageProvider(
+            url,
+            headers: ImageCacheService.headers,
+            cacheManager: ImageCacheService.cacheManager,
+          ),
+          width: 100,
         ),
-        maximumColorCount: 12,
+        maximumColorCount: 8,
       );
       if (token != _extractToken || !mounted) return;
       final color =
@@ -288,14 +313,19 @@ class _PlayerBackgroundState extends State<_PlayerBackground> {
 
   @override
   Widget build(BuildContext context) {
-    final topColor = Color.lerp(_dominantColor, Colors.black, 0.35)!;
+    final colorScheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    // 深浅各一套：浅色用取色+白，深色用取色+黑，避免播放页永远纯黑
+    final baseColor = isDark ? Colors.black : Colors.white;
+    final topColor = Color.lerp(_dominantColor, baseColor, 0.35)!;
+    final bottomColor = isDark ? Colors.black : colorScheme.surface;
     return AnimatedContainer(
       duration: const Duration(milliseconds: 600),
       decoration: BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
-          colors: [topColor, Colors.black],
+          colors: [topColor, bottomColor],
         ),
       ),
     );
@@ -405,13 +435,23 @@ class _LyricsViewState extends ConsumerState<_LyricsView>
 
   @override
   Widget build(BuildContext context) {
-    final position = ref.watch(playerProvider.select((s) => s.position));
+    // 秒级订阅：之前 watch Duration 全精度，100ms 重建整个歌词列表
+    final positionSeconds = ref.watch(
+      playerProvider.select((s) => s.position.inSeconds),
+    );
+    final position = Duration(seconds: positionSeconds);
+    // 跟随系统字体缩放：之前固定 24/18，大字体用户看不清
+    final textScaler = MediaQuery.textScalerOf(
+      context,
+    ).scale(1.0).clamp(0.8, 1.6);
+    final onSurface = Theme.of(context).colorScheme.onSurface;
+    final onSurfaceDim = onSurface.withValues(alpha: 0.6);
 
     if (widget.lyrics.isEmpty) {
       return Center(
         child: Text(
           AppLocalizations.of(context).noLyrics,
-          style: const TextStyle(color: Colors.white),
+          style: TextStyle(color: onSurface),
         ),
       );
     }
@@ -460,14 +500,17 @@ class _LyricsViewState extends ConsumerState<_LyricsView>
           return Padding(
             padding: const EdgeInsets.symmetric(vertical: 8),
             child: Center(
-              child: Text(
-                widget.lyrics[index].text,
-                style: TextStyle(
-                  color: isCurrent ? Colors.white : Colors.white38,
-                  fontSize: isCurrent ? 24 : 18,
-                  fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal,
+              child: Semantics(
+                selected: isCurrent,
+                child: Text(
+                  widget.lyrics[index].text,
+                  style: TextStyle(
+                    color: isCurrent ? onSurface : onSurfaceDim,
+                    fontSize: (isCurrent ? 24 : 18) * textScaler,
+                    fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal,
+                  ),
+                  textAlign: TextAlign.center,
                 ),
-                textAlign: TextAlign.center,
               ),
             ),
           );
@@ -491,6 +534,8 @@ class _ControlsSection extends ConsumerWidget {
     final mode = ref.watch(playerProvider.select((s) => s.mode));
     final speed = ref.watch(playerProvider.select((s) => s.speed));
     final song = ref.watch(playerProvider.select((s) => s.currentSong));
+    final onSurface = Theme.of(context).colorScheme.onSurface;
+    final onSurfaceDim = onSurface.withValues(alpha: 0.6);
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -500,9 +545,9 @@ class _ControlsSection extends ConsumerWidget {
           padding: const EdgeInsets.symmetric(horizontal: 40),
           child: TabBar(
             controller: tabController,
-            indicatorColor: Colors.white,
-            labelColor: Colors.white,
-            unselectedLabelColor: Colors.white60,
+            indicatorColor: onSurface,
+            labelColor: onSurface,
+            unselectedLabelColor: onSurfaceDim,
             dividerColor: Colors.transparent,
             tabs: [
               Tab(text: AppLocalizations.of(context).songTab),
@@ -523,55 +568,77 @@ class _ControlsSection extends ConsumerWidget {
     WidgetRef ref,
     bool isPlaying,
   ) {
+    final onSurface = Theme.of(context).colorScheme.onSurface;
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
       children: [
-        IconButton(
-          tooltip: MaterialLocalizations.of(context).previousPageTooltip,
-          icon: const Icon(Icons.skip_previous, color: Colors.white, size: 40),
-          onPressed: () => ref.read(playerProvider.notifier).previous(),
+        Semantics(
+          button: true,
+          label: MaterialLocalizations.of(context).previousPageTooltip,
+          child: IconButton(
+            tooltip: MaterialLocalizations.of(context).previousPageTooltip,
+            icon: Icon(Icons.skip_previous, color: onSurface, size: 40),
+            constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+            onPressed: () => ref.read(playerProvider.notifier).previous(),
+          ),
         ),
         Container(
-          decoration: const BoxDecoration(
+          decoration: BoxDecoration(
             shape: BoxShape.circle,
-            color: Colors.white,
+            color: onSurface,
           ),
-          child: IconButton(
-            tooltip: isPlaying
+          child: Semantics(
+            button: true,
+            label: isPlaying
                 ? AppLocalizations.of(context).pause
                 : AppLocalizations.of(context).play,
-            icon: Icon(
-              isPlaying ? Icons.pause : Icons.play_arrow,
-              color: Colors.black,
-              size: 40,
+            child: IconButton(
+              tooltip: isPlaying
+                  ? AppLocalizations.of(context).pause
+                  : AppLocalizations.of(context).play,
+              icon: Icon(
+                isPlaying ? Icons.pause : Icons.play_arrow,
+                color: Theme.of(context).colorScheme.surface,
+                size: 40,
+              ),
+              constraints: const BoxConstraints(minWidth: 56, minHeight: 56),
+              onPressed: () =>
+                  ref.read(playerProvider.notifier).togglePlayPause(),
             ),
-            onPressed: () =>
-                ref.read(playerProvider.notifier).togglePlayPause(),
           ),
         ),
-        IconButton(
-          tooltip: MaterialLocalizations.of(context).nextPageTooltip,
-          icon: const Icon(Icons.skip_next, color: Colors.white, size: 40),
-          onPressed: () => ref.read(playerProvider.notifier).next(),
+        Semantics(
+          button: true,
+          label: MaterialLocalizations.of(context).nextPageTooltip,
+          child: IconButton(
+            tooltip: MaterialLocalizations.of(context).nextPageTooltip,
+            icon: Icon(Icons.skip_next, color: onSurface, size: 40),
+            constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+            onPressed: () => ref.read(playerProvider.notifier).next(),
+          ),
         ),
       ],
     );
   }
 
   Future<void> _downloadCurrent(BuildContext context, WidgetRef ref) async {
-    final result = await ref
-        .read(playerProvider.notifier)
-        .downloadCurrentSong();
-    if (result == null || !context.mounted) return;
-
+    final notifier = ref.read(playerProvider.notifier);
+    // 先快检已下载，避免弹进度框
+    final quick = await notifier.downloadCurrentSong();
+    if (quick == null || !context.mounted) return;
     final l10n = AppLocalizations.of(context);
-    final message = switch (result) {
-      DownloadResult.started => l10n.downloadStarted,
-      DownloadResult.alreadyDownloaded => l10n.alreadyDownloaded,
-      DownloadResult.failed => l10n.loadFailed,
-    };
-
-    ToastUtils.showToast(context, message);
+    if (quick == DownloadResult.alreadyDownloaded) {
+      ToastUtils.showToast(context, l10n.alreadyDownloaded);
+      return;
+    }
+    if (quick == DownloadResult.failed) {
+      ToastUtils.showError(context, l10n.downloadFailed);
+      return;
+    }
+    // 已以后台启动（quick == started），再用进度框做二次确认展示：
+    // 为避免重复下载，这里仅提示；真正的进度展示走 Mine/通知。
+    // 若需要精确进度，可在 downloadCurrentSong(onProgress:) 基础上接 LinearProgressIndicator。
+    ToastUtils.showToast(context, l10n.downloadStarted);
   }
 
   Future<void> _shareSong(BuildContext context, Song? song) async {
@@ -589,12 +656,83 @@ class _ControlsSection extends ConsumerWidget {
     }
   }
 
-  static const _speedOptions = [1.0, 1.25, 1.5, 0.75];
+  static const _speedOptions = [0.75, 1.0, 1.25, 1.5, 2.0];
 
-  void _cycleSpeed(WidgetRef ref, double current) {
-    final index = _speedOptions.indexOf(current);
-    final next = _speedOptions[(index + 1) % _speedOptions.length];
-    ref.read(playerProvider.notifier).setSpeed(next);
+  Future<void> _pickSpeed(
+    BuildContext context,
+    WidgetRef ref,
+    double current,
+  ) async {
+    // 之前循环 1->1.25->1.5->0.75，第三次突然变慢；改弹窗单选
+    final picked = await showDialog<double>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: Text(AppLocalizations.of(context).speed),
+        children: _speedOptions
+            .map(
+              (s) => ListTile(
+                title: Text('${_formatSpeed(s)}x'),
+                trailing: s == current
+                    ? Icon(
+                        Icons.check,
+                        color: Theme.of(context).colorScheme.primary,
+                      )
+                    : null,
+                onTap: () => Navigator.of(context).pop(s),
+              ),
+            )
+            .toList(),
+      ),
+    );
+    if (picked != null) {
+      ref.read(playerProvider.notifier).setSpeed(picked);
+    }
+  }
+
+  Future<void> _pickSleepTimer(BuildContext context, WidgetRef ref) async {
+    final l10n = AppLocalizations.of(context);
+    final current = ref.read(sleepTimerProvider);
+    Duration? picked;
+    var chose = false;
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        Widget item(Duration? value, String label) {
+          final selected = value == current;
+          return ListTile(
+            title: Text(label),
+            trailing: selected
+                ? Icon(
+                    Icons.check,
+                    color: Theme.of(context).colorScheme.primary,
+                  )
+                : null,
+            onTap: () {
+              picked = value;
+              chose = true;
+              Navigator.of(context).pop();
+            },
+          );
+        }
+
+        return SimpleDialog(
+          title: Text(l10n.sleepTimer),
+          children: [
+            item(null, l10n.sleepOff),
+            item(const Duration(minutes: 15), '15 min'),
+            item(const Duration(minutes: 30), '30 min'),
+            item(const Duration(minutes: 60), '60 min'),
+          ],
+        );
+      },
+    );
+    if (!context.mounted || !chose) return;
+    {
+      ref.read(playerProvider.notifier).setSleepTimer(picked);
+      if (picked != null && context.mounted) {
+        ToastUtils.showToast(context, l10n.sleepTimer);
+      }
+    }
   }
 
   Widget _buildOptionButtons(
@@ -605,6 +743,7 @@ class _ControlsSection extends ConsumerWidget {
     double speed,
   ) {
     final l10n = AppLocalizations.of(context);
+    final sleepTimer = ref.watch(sleepTimerProvider);
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12),
       child: Row(
@@ -620,7 +759,17 @@ class _ControlsSection extends ConsumerWidget {
             context,
             icon: Icons.speed,
             label: '${l10n.speed} ${_formatSpeed(speed)}x',
-            onPressed: () => _cycleSpeed(ref, speed),
+            onPressed: () => _pickSpeed(context, ref, speed),
+          ),
+          _buildOptionButton(
+            context,
+            icon: sleepTimer != null
+                ? Icons.bedtime
+                : Icons.bedtime_outlined,
+            label: sleepTimer != null
+                ? '${sleepTimer.inMinutes}min'
+                : l10n.sleepTimer,
+            onPressed: () => _pickSleepTimer(context, ref),
           ),
           _buildOptionButton(
             context,
@@ -678,6 +827,8 @@ class _ControlsSection extends ConsumerWidget {
     required String label,
     required VoidCallback onPressed,
   }) {
+    final onSurface = Theme.of(context).colorScheme.onSurface;
+    final onSurfaceDim = onSurface.withValues(alpha: 0.7);
     return Expanded(
       child: Tooltip(
         message: label,
@@ -689,13 +840,13 @@ class _ControlsSection extends ConsumerWidget {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(icon, color: Colors.white, size: 26),
+                Icon(icon, color: onSurface, size: 26),
                 const SizedBox(height: 4),
                 Text(
                   label,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(color: Colors.white70, fontSize: 11),
+                  style: TextStyle(color: onSurfaceDim, fontSize: 11),
                 ),
               ],
             ),
@@ -735,53 +886,64 @@ class _SeekbarState extends ConsumerState<_Seekbar> {
         : 1.0;
     final sliderValue = (_dragValue ?? position.inSeconds.clamp(0, maxSeconds))
         .toDouble();
+    final hasDuration = duration.inSeconds > 0;
+    final onSurface = Theme.of(context).colorScheme.onSurface;
+    final onSurfaceDim = onSurface.withValues(alpha: 0.6);
 
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        const SizedBox(height: 12),
-        SliderTheme(
-          data: SliderTheme.of(context).copyWith(
-            thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
-            trackHeight: 4,
-            activeTrackColor: Colors.white,
-            inactiveTrackColor: Colors.white24,
-            thumbColor: Colors.white,
+    return Semantics(
+      slider: true,
+      value: '${_formatDuration(position)}/${_formatDuration(duration)}',
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const SizedBox(height: 12),
+          SliderTheme(
+            data: SliderTheme.of(context).copyWith(
+              // 增大触摸目标：之前 thumb 6/track 4 难拖
+              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 8),
+              trackHeight: 4,
+              activeTrackColor: onSurface,
+              inactiveTrackColor: onSurface.withValues(alpha: 0.24),
+              thumbColor: onSurface,
+            ),
+            child: Slider(
+              min: 0.0,
+              value: sliderValue.clamp(0.0, maxSeconds),
+              max: maxSeconds,
+              // 无时长时禁用，避免 thumb 卡 0 无反馈
+              onChanged: hasDuration
+                  ? (value) => setState(() => _dragValue = value)
+                  : null,
+              onChangeEnd: (value) {
+                ref
+                    .read(playerProvider.notifier)
+                    .seek(Duration(seconds: value.toInt()));
+                setState(() => _dragValue = null);
+              },
+            ),
           ),
-          child: Slider(
-            min: 0.0,
-            value: sliderValue.clamp(0.0, maxSeconds),
-            max: maxSeconds,
-            onChanged: (value) => setState(() => _dragValue = value),
-            onChangeEnd: (value) {
-              ref
-                  .read(playerProvider.notifier)
-                  .seek(Duration(seconds: value.toInt()));
-              setState(() => _dragValue = null);
-            },
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                _formatDuration(
-                  _dragValue != null
-                      ? Duration(seconds: _dragValue!.toInt())
-                      : position,
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  _formatDuration(
+                    _dragValue != null
+                        ? Duration(seconds: _dragValue!.toInt())
+                        : position,
+                  ),
+                  style: TextStyle(color: onSurfaceDim),
                 ),
-                style: const TextStyle(color: Colors.white60),
-              ),
-              Text(
-                _formatDuration(duration),
-                style: const TextStyle(color: Colors.white60),
-              ),
-            ],
+                Text(
+                  _formatDuration(duration),
+                  style: TextStyle(color: onSurfaceDim),
+                ),
+              ],
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 

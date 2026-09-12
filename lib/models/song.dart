@@ -129,4 +129,17 @@ class Song {
       'lyrics': lyrics,
     };
   }
+
+  /// 轻量持久化快照：去掉 lyrics（LRC 可达几十KB），避免 SP 单 key 膨胀、
+  /// 启动全量 decode 卡顿。歌词只放内存 + 按需请求详情。
+  Map<String, dynamic> toCacheJson() {
+    return {
+      'id': id,
+      'name': name,
+      'artist': artist,
+      'album': album,
+      'cover': cover,
+      'url': url,
+    };
+  }
 }

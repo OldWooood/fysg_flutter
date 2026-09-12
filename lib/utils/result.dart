@@ -106,6 +106,23 @@ sealed class AppError {
     NotFoundError(:final resource) => '$resource 不存在',
     UnknownError(:final error) => '未知错误: $error',
   };
+
+  /// 错误码：UI 层据此做国际化映射，避免网络层硬编码中文
+  String get code => switch (this) {
+    NetworkError(:final msg) =>
+      msg != null && msg.contains('过于频繁')
+          ? 'rateLimited'
+          : msg != null && msg.contains('超时')
+          ? 'timeout'
+          : msg != null && msg.contains('拒绝')
+          ? 'forbidden'
+          : msg != null && msg.contains('服务器')
+          ? 'server'
+          : 'network',
+    CacheError() => 'cache',
+    NotFoundError() => 'notFound',
+    UnknownError() => 'unknown',
+  };
 }
 
 class NetworkError extends AppError {

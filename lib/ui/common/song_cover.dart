@@ -14,6 +14,7 @@ class SongCover extends StatelessWidget {
 
   /// 解码到内存时的最大宽度（像素），小尺寸封面传此参数可显著降低内存占用
   final int? memCacheWidth;
+  final int? memCacheHeight;
 
   const SongCover({
     super.key,
@@ -25,6 +26,7 @@ class SongCover extends StatelessWidget {
     this.placeholderIcon = Icons.music_note,
     this.placeholderIconSize = 24,
     this.memCacheWidth,
+    this.memCacheHeight,
   });
 
   @override
@@ -43,10 +45,14 @@ class SongCover extends StatelessWidget {
     return CachedNetworkImage(
       imageUrl: url,
       httpHeaders: ImageCacheService.headers,
+      cacheManager: ImageCacheService.cacheManager,
       width: width,
       height: height,
       fit: fit,
       memCacheWidth: memCacheWidth,
+      memCacheHeight: memCacheHeight,
+      fadeInDuration: const Duration(milliseconds: 200),
+      fadeOutDuration: const Duration(milliseconds: 100),
       placeholder: (context, _) => _placeholder(context),
       errorWidget: (context, _, _) => _placeholder(context),
     );

@@ -47,6 +47,17 @@ final playerQueueStateProvider =
       );
     });
 
+/// 睡眠定时：剩余时长，null 表示关闭。UI 层设置，Notifier 层执行 pause。
+final sleepTimerProvider =
+    NotifierProvider<SleepTimerNotifier, Duration?>(SleepTimerNotifier.new);
+
+class SleepTimerNotifier extends Notifier<Duration?> {
+  @override
+  Duration? build() => null;
+
+  void set(Duration? value) => state = value;
+}
+
 // Riverpod 3：StateNotifierProvider/StateNotifier 已移除，改用 NotifierProvider。
 // 依赖改在 build() 内用 ref.watch 获取（实例在 build 重跑时保留，仅 state 会重置；
 // 下方 service 均为稳定单例，不会触发重跑）。
@@ -119,6 +130,14 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
   bool _queueStateRestored = false;
   int? _lastHistorySongId;
   DateTime _lastPositionPersist = DateTime.now();
+  // 已下载 id 内存缓存：避免 _createAudioSource 每次 exists() IO
+  Set<int>? _downloadedIdsCache;
+  // 后台同步节流：position ~10次/s，不节流则持续跨 isolate
+  DateTime _lastPlaybackSync = DateTime.fromMillisecondsSinceEpoch(0);
+  bool? _lastSyncPlaying;
+  ProcessingState? _lastSyncProcessing;
+  DateTime _lastPositionStateUpdate = DateTime.fromMillisecondsSinceEpoch(0);
+  Timer? _sleepTimer;
   int _consecutiveAutoSkips = 0;
   late final QueuePersistence _persistence;
   static const _songResolver = SongResolver();
@@ -150,6 +169,8 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
       // 防止静态单例持有已释放对象。
       ref.onDispose(() {
         _isDisposed = true;
+        _sleepTimer?.cancel();
+        _recentService.dispose();
         for (final subscription in _subscriptions) {
           unawaited(subscription.cancel());
         }
@@ -226,6 +247,16 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
       _audioPlayer.positionStream.listen(
         (position) {
           if (!_mounted || state.position == position) return;
+          // position state 节流到 500ms：秒级 UI 足够，高频 copyWith 只增 GC
+          final now = DateTime.now();
+          final secondChanged =
+              position.inSeconds != state.position.inSeconds;
+          if (!secondChanged &&
+              now.difference(_lastPositionStateUpdate) <
+                  AppConstants.positionStateMinInterval) {
+            return;
+          }
+          _lastPositionStateUpdate = now;
           state = state.copyWith(position: position);
           _syncBackgroundPlayback();
           _maybePersistPosition();
@@ -414,16 +445,25 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
   }
 
   /// 同步 IO（existsSync）会阻塞 UI 线程，全部改为异步 exists()。
+  /// 已下载 id 常驻内存 Set，命中则零 IO；prefetch/本地并行检查。
   Future<AudioSource> _createAudioSource(Song song) async {
-    final prefetched = await _downloadService.getPrefetchFile(song.id);
+    if (_downloadedIdsCache?.contains(song.id) ?? false) {
+      final local = await _downloadService.getLocalFile(song.id);
+      return AudioSource.file(local.path);
+    }
+    final results = await Future.wait([
+      _downloadService.getPrefetchFile(song.id),
+      _downloadService.getLocalFile(song.id),
+    ]);
+    final prefetched = results[0];
+    final localFile = results[1];
     if (await prefetched.exists()) {
       _prefetchCachedIds.add(song.id);
       return AudioSource.file(prefetched.path);
     }
 
-    final localFile = await _downloadService.getLocalFile(song.id);
-
     if (await localFile.exists()) {
+      (_downloadedIdsCache ??= {}).add(song.id);
       return AudioSource.file(localFile.path);
     }
 
@@ -438,7 +478,11 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
     );
   }
 
-  Future<DownloadResult?> downloadCurrentSong() async {
+  /// 带进度的下载：UI 传 onProgress 显示通知/进度条，支持取消。
+  /// 不传 onProgress 时保持后台 fire-and-forget（兼容旧调用）。
+  Future<DownloadResult?> downloadCurrentSong({
+    void Function(int received, int total)? onProgress,
+  }) async {
     final song = state.currentSong;
     if (song == null) return null;
 
@@ -447,24 +491,52 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
         return DownloadResult.alreadyDownloaded;
       }
 
-      // Start download in background
-      _downloadService
-          .downloadSong(song)
-          .then((_) {
-            debugPrint('Downloaded ${song.name}');
-            // 下载完成后刷新"已下载"列表
-            if (_mounted) ref.invalidate(downloadedSongsProvider);
-          })
-          .catchError((Object e) {
-            // 之前这里只 debugPrint，用户无感知；现打日志并可由 UI toast
-            debugPrint('Download error: $e');
-          });
+      if (onProgress == null) {
+        // Start download in background
+        _downloadService
+            .downloadSong(song)
+            .then((_) {
+              debugPrint('Downloaded ${song.name}');
+              (_downloadedIdsCache ??= {}).add(song.id);
+              // 下载完成后刷新"已下载"列表
+              if (_mounted) ref.invalidate(downloadedSongsProvider);
+            })
+            .catchError((Object e) {
+              debugPrint('Download error: $e');
+            });
+        return DownloadResult.started;
+      }
 
-      return DownloadResult.started;
+      try {
+        await _downloadService.downloadSong(song, onProgress: onProgress);
+        (_downloadedIdsCache ??= {}).add(song.id);
+        if (_mounted) ref.invalidate(downloadedSongsProvider);
+        return DownloadResult.started;
+      } catch (e) {
+        debugPrint('Download error: $e');
+        return DownloadResult.failed;
+      }
     } catch (e) {
       debugPrint('Download error: $e');
       return DownloadResult.failed;
     }
+  }
+
+  void cancelCurrentDownload() {
+    final song = state.currentSong;
+    if (song != null) _downloadService.cancelDownload(song.id);
+  }
+
+  /// 睡眠定时：到时自动暂停。切歌/手动暂停不取消，到时即停。
+  void setSleepTimer(Duration? duration) {
+    _sleepTimer?.cancel();
+    _sleepTimer = null;
+    ref.read(sleepTimerProvider.notifier).set(duration);
+    if (duration == null) return;
+    _sleepTimer = Timer(duration, () {
+      _audioPlayer.pause();
+      if (_mounted) ref.read(sleepTimerProvider.notifier).set(null);
+    });
   }
 
   Future<void> logQueue(List<Song> songs, int index) async {
@@ -617,22 +689,34 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
     required Song currentSongSnapshot,
     required int buildToken,
   }) async {
-    // 并发解析（本地文件/详情请求混合），保持原始顺序
+    // 并发解析（本地文件/详情请求混合），保持原始顺序。
+    // 邻近优先：先解当前及前后，首屏可更快就绪；并发 3 限流省流量。
     final entries = List<({Song song, AudioSource source})?>.filled(
       songs.length,
       null,
     );
+    var startIndex = songs.indexWhere((s) => s.id == currentSongSnapshot.id);
+    if (startIndex < 0) startIndex = 0;
+    final order = <int>[];
+    for (var offset = 0; offset < songs.length; offset++) {
+      final fwd = startIndex + offset;
+      if (fwd < songs.length) order.add(fwd);
+      final back = startIndex - offset;
+      if (offset != 0 && back >= 0) order.add(back);
+      if (order.length >= songs.length) break;
+    }
     var cursor = 0;
     Future<void> worker() async {
       while (true) {
-        final index = cursor++;
-        if (index >= songs.length) return;
+        final orderPos = cursor++;
+        if (orderPos >= order.length) return;
+        final index = order[orderPos];
         if (!_mounted || buildToken != _queueBuildToken) return;
         entries[index] = await _buildPlayableEntry(songs[index]);
       }
     }
 
-    const concurrency = 4;
+    const concurrency = 3;
     await Future.wait(
       List.generate(concurrency, (_) => worker(), growable: false),
     );
@@ -794,14 +878,28 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
     final handler = AppAudioService.handler;
     if (handler == null) return;
     handler.setNowPlaying(song);
-    _syncBackgroundPlayback();
+    // 切歌必须立即同步锁屏，否则封面/标题延迟 1s
+    _syncBackgroundPlayback(force: true);
   }
 
-  void _syncBackgroundPlayback() {
+  void _syncBackgroundPlayback({bool force = false}) {
     final handler = AppAudioService.handler;
     if (handler == null) return;
+    // 节流：1s 内且播放状态/加载状态未变则跳过跨 isolate 同步
+    final now = DateTime.now();
+    final playing = _audioPlayer.playing;
+    if (!force &&
+        now.difference(_lastPlaybackSync) <
+            AppConstants.playbackSyncMinInterval &&
+        _lastSyncPlaying == playing &&
+        _lastSyncProcessing == _processingState) {
+      return;
+    }
+    _lastPlaybackSync = now;
+    _lastSyncPlaying = playing;
+    _lastSyncProcessing = _processingState;
     handler.setPlayback(
-      isPlaying: _audioPlayer.playing,
+      isPlaying: playing,
       hasCurrentSong: state.currentSong != null,
       position: _audioPlayer.position,
       bufferedPosition: _audioPlayer.bufferedPosition,

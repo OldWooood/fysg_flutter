@@ -8,6 +8,7 @@ import '../../l10n/app_localizations.dart';
 import '../../models/playlist.dart';
 import '../../providers/player_provider.dart';
 import '../../utils/constants.dart';
+import '../common/error_view.dart';
 import 'playlist_detail_page.dart';
 
 class CategoriesPage extends ConsumerStatefulWidget {
@@ -77,6 +78,8 @@ class _CategoryGridState extends ConsumerState<_CategoryGrid> {
   bool _isLoadingMore = false;
   bool _hasMore = true;
   String? _errorMessage;
+  // 分页错误独立状态：之前与首屏共用 _errorMessage，第2页抖动吞掉整个列表
+  bool _loadMoreError = false;
 
   @override
   void initState() {
@@ -101,19 +104,26 @@ class _CategoryGridState extends ConsumerState<_CategoryGrid> {
           if (page == 0) {
             _items = items;
             _isLoading = false;
+            _errorMessage = null;
           } else {
             _items.addAll(items);
             _currentPage = page;
             _isLoadingMore = false;
           }
+          _loadMoreError = false;
           _hasMore = items.length >= AppConstants.defaultPageSize;
         });
       },
       err: (error) {
         setState(() {
-          _errorMessage = error.message;
-          _isLoading = false;
-          _isLoadingMore = false;
+          if (page == 0) {
+            _errorMessage = error.message;
+            _isLoading = false;
+          } else {
+            // 分页失败只置 footer 重试，不碰已有列表
+            _isLoadingMore = false;
+            _loadMoreError = true;
+          }
         });
         if (page == 0) {
           debugPrint('Error fetching ${widget.type}: $error');
@@ -123,6 +133,15 @@ class _CategoryGridState extends ConsumerState<_CategoryGrid> {
   }
 
   Future<void> _fetchInitialData() async {
+    await _fetchByType(0);
+  }
+
+  Future<void> _onRefresh() async {
+    setState(() {
+      _currentPage = 0;
+      _hasMore = true;
+      _loadMoreError = false;
+    });
     await _fetchByType(0);
   }
 
@@ -137,7 +156,10 @@ class _CategoryGridState extends ConsumerState<_CategoryGrid> {
 
   Future<void> _loadMore() async {
     if (_isLoadingMore) return;
-    setState(() => _isLoadingMore = true);
+    setState(() {
+      _isLoadingMore = true;
+      _loadMoreError = false;
+    });
     await _fetchByType(_currentPage + 1);
   }
 
@@ -152,24 +174,25 @@ class _CategoryGridState extends ConsumerState<_CategoryGrid> {
     if (_isLoading) return const Center(child: CircularProgressIndicator());
 
     if (_errorMessage != null) {
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
+      return ErrorView(
+        message: _errorMessage!,
+        onRetry: () {
+          setState(() {
+            _errorMessage = null;
+            _isLoading = true;
+          });
+          _fetchInitialData();
+        },
+      );
+    }
+
+    if (_items.isEmpty) {
+      return RefreshIndicator(
+        onRefresh: _onRefresh,
+        child: ListView(
           children: [
-            const Icon(Icons.error_outline, size: 48, color: Colors.grey),
-            const SizedBox(height: 16),
-            Text(_errorMessage!),
-            const SizedBox(height: 16),
-            ElevatedButton(
-              onPressed: () {
-                setState(() {
-                  _errorMessage = null;
-                  _isLoading = true;
-                });
-                _fetchInitialData();
-              },
-              child: Text(AppLocalizations.of(context).retry),
-            ),
+            const SizedBox(height: 120),
+            EmptyView(message: AppLocalizations.of(context).noResults),
           ],
         ),
       );
@@ -179,91 +202,101 @@ class _CategoryGridState extends ConsumerState<_CategoryGrid> {
       context,
     ).colorScheme.surfaceContainerHighest;
 
-    return MasonryGridView.count(
-      controller: _scrollController,
-      cacheExtent: AppConstants.listCacheExtent,
-      padding: const EdgeInsets.all(16),
-      crossAxisCount: 2,
-      mainAxisSpacing: 16,
-      crossAxisSpacing: 16,
-      itemCount: _items.length + (_isLoadingMore ? 2 : 0),
-      itemBuilder: (context, index) {
-        if (index >= _items.length) {
-          return const Center(child: CircularProgressIndicator());
-        }
-        final item = _items[index];
-        return GestureDetector(
-          onTap: () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) => PlaylistDetailPage(playlist: item),
-              ),
-            );
-          },
-          child: Container(
-            decoration: BoxDecoration(
-              color: Theme.of(context).cardColor,
-              borderRadius: BorderRadius.circular(12),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.08),
-                  blurRadius: 10,
-                  offset: const Offset(0, 4),
+    return RefreshIndicator(
+      onRefresh: _onRefresh,
+      child: MasonryGridView.count(
+        controller: _scrollController,
+        cacheExtent: AppConstants.listCacheExtent,
+        padding: const EdgeInsets.all(16),
+        crossAxisCount: 2,
+        mainAxisSpacing: 16,
+        crossAxisSpacing: 16,
+        itemCount: _items.length + ((_isLoadingMore || _loadMoreError) ? 1 : 0),
+        itemBuilder: (context, index) {
+          if (index >= _items.length) {
+            if (_loadMoreError) {
+              return LoadMoreErrorFooter(onRetry: _loadMore);
+            }
+            return const Center(child: CircularProgressIndicator());
+          }
+          final item = _items[index];
+          return RepaintBoundary(
+            child: GestureDetector(
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => PlaylistDetailPage(playlist: item),
+                  ),
+                );
+              },
+              child: Container(
+                decoration: BoxDecoration(
+                  color: Theme.of(context).cardColor,
+                  borderRadius: BorderRadius.circular(12),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.06),
+                      blurRadius: 6,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
                 ),
-              ],
-            ),
-            clipBehavior: Clip.antiAlias,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                AspectRatio(
-                  aspectRatio: 1,
-                  child: Hero(
-                    tag: 'playlist-cover-${widget.type}-${item.id}',
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: placeholderColor,
-                        image: item.cover != null
-                            ? DecorationImage(
-                                image: CachedNetworkImageProvider(
-                                  item.cover!,
-                                  headers: ImageCacheService.headers,
-                                  // 网格小图按 ~200px 解码，避免全分辨率解码 OOM
-                                  maxWidth: 400,
-                                  maxHeight: 400,
-                                ),
-                                fit: BoxFit.cover,
-                              )
-                            : null,
+                clipBehavior: Clip.antiAlias,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    AspectRatio(
+                      aspectRatio: 1,
+                      child: Hero(
+                        tag: 'playlist-cover-${widget.type}-${item.id}',
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: placeholderColor,
+                            image: item.cover != null
+                                ? DecorationImage(
+                                    image: CachedNetworkImageProvider(
+                                      item.cover!,
+                                      headers: ImageCacheService.headers,
+                                      cacheManager:
+                                          ImageCacheService.cacheManager,
+                                      // 网格小图按 ~200px 解码，避免全分辨率解码 OOM
+                                      maxWidth: 400,
+                                      maxHeight: 400,
+                                    ),
+                                    fit: BoxFit.cover,
+                                  )
+                                : null,
+                          ),
+                          child: item.cover == null
+                              ? Center(
+                                  child: Icon(
+                                    Icons.music_note,
+                                    size: 40,
+                                    color: Theme.of(context).hintColor,
+                                  ),
+                                )
+                              : null,
+                        ),
                       ),
-                      child: item.cover == null
-                          ? Center(
-                              child: Icon(
-                                Icons.music_note,
-                                size: 40,
-                                color: Theme.of(context).hintColor,
-                              ),
-                            )
-                          : null,
                     ),
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Text(
-                    item.name,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 16,
+                    Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Text(
+                        item.name,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                        ),
+                      ),
                     ),
-                  ),
+                  ],
                 ),
-              ],
+              ),
             ),
-          ),
-        );
-      },
+          );
+        },
+      ),
     );
   }
 }

@@ -30,6 +30,28 @@ class MiniPlayer extends ConsumerWidget {
           ),
         );
       },
+      // 左右滑切歌：之前只有点开，单手操作难
+      onHorizontalDragEnd: (details) {
+        final velocity = details.primaryVelocity ?? 0;
+        if (velocity.abs() < 300) return;
+        if (velocity > 0) {
+          ref.read(playerProvider.notifier).previous();
+        } else {
+          ref.read(playerProvider.notifier).next();
+        }
+      },
+      // 上滑展开全屏
+      onVerticalDragEnd: (details) {
+        final velocity = details.primaryVelocity ?? 0;
+        if (velocity < -400) {
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (context) => const PlayerPage(),
+              fullscreenDialog: true,
+            ),
+          );
+        }
+      },
       child: Container(
         constraints: const BoxConstraints(minHeight: 80),
         decoration: BoxDecoration(
@@ -89,52 +111,80 @@ class MiniPlayer extends ConsumerWidget {
                       Row(
                         children: [
                           Expanded(
-                            child: IconButton(
-                              tooltip: MaterialLocalizations.of(
+                            child: Semantics(
+                              button: true,
+                              label: MaterialLocalizations.of(
                                 context,
                               ).previousPageTooltip,
-                              icon: Icon(
-                                Icons.skip_previous,
-                                color: foregroundColor,
+                              child: IconButton(
+                                tooltip: MaterialLocalizations.of(
+                                  context,
+                                ).previousPageTooltip,
+                                icon: Icon(
+                                  Icons.skip_previous,
+                                  color: foregroundColor,
+                                ),
+                                // 触摸目标 48dp：之前 compact ~32dp 易误触
+                                constraints: const BoxConstraints(
+                                  minWidth: 48,
+                                  minHeight: 48,
+                                ),
+                                onPressed: () {
+                                  ref.read(playerProvider.notifier).previous();
+                                },
                               ),
-                              visualDensity: VisualDensity.compact,
-                              onPressed: () {
-                                ref.read(playerProvider.notifier).previous();
-                              },
                             ),
                           ),
                           Expanded(
-                            child: IconButton(
-                              tooltip: playerState.isPlaying
+                            child: Semantics(
+                              button: true,
+                              label: playerState.isPlaying
                                   ? AppLocalizations.of(context).pause
                                   : AppLocalizations.of(context).play,
-                              icon: Icon(
-                                playerState.isPlaying
-                                    ? Icons.pause
-                                    : Icons.play_arrow,
-                                color: foregroundColor,
+                              child: IconButton(
+                                tooltip: playerState.isPlaying
+                                    ? AppLocalizations.of(context).pause
+                                    : AppLocalizations.of(context).play,
+                                icon: Icon(
+                                  playerState.isPlaying
+                                      ? Icons.pause
+                                      : Icons.play_arrow,
+                                  color: foregroundColor,
+                                ),
+                                constraints: const BoxConstraints(
+                                  minWidth: 48,
+                                  minHeight: 48,
+                                ),
+                                onPressed: () {
+                                  ref
+                                      .read(playerProvider.notifier)
+                                      .togglePlayPause();
+                                },
                               ),
-                              visualDensity: VisualDensity.compact,
-                              onPressed: () {
-                                ref
-                                    .read(playerProvider.notifier)
-                                    .togglePlayPause();
-                              },
                             ),
                           ),
                           Expanded(
-                            child: IconButton(
-                              tooltip: MaterialLocalizations.of(
+                            child: Semantics(
+                              button: true,
+                              label: MaterialLocalizations.of(
                                 context,
                               ).nextPageTooltip,
-                              icon: Icon(
-                                Icons.skip_next,
-                                color: foregroundColor,
+                              child: IconButton(
+                                tooltip: MaterialLocalizations.of(
+                                  context,
+                                ).nextPageTooltip,
+                                icon: Icon(
+                                  Icons.skip_next,
+                                  color: foregroundColor,
+                                ),
+                                constraints: const BoxConstraints(
+                                  minWidth: 48,
+                                  minHeight: 48,
+                                ),
+                                onPressed: () {
+                                  ref.read(playerProvider.notifier).next();
+                                },
                               ),
-                              visualDensity: VisualDensity.compact,
-                              onPressed: () {
-                                ref.read(playerProvider.notifier).next();
-                              },
                             ),
                           ),
                           Expanded(
@@ -144,7 +194,10 @@ class MiniPlayer extends ConsumerWidget {
                                 Icons.playlist_play,
                                 color: foregroundColor,
                               ),
-                              visualDensity: VisualDensity.compact,
+                              constraints: const BoxConstraints(
+                                minWidth: 48,
+                                minHeight: 48,
+                              ),
                               onPressed: () {
                                 showModalBottomSheet(
                                   context: context,
@@ -170,25 +223,31 @@ class MiniPlayer extends ConsumerWidget {
   }
 }
 
-/// 顶部细进度指示线：唯一订阅 position 的地方
+/// 顶部细进度指示线：秒级订阅 + RepaintBoundary，避免 10fps 全量重建
 class _MiniProgressLine extends ConsumerWidget {
   const _MiniProgressLine();
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final position = ref.watch(playerProvider.select((s) => s.position));
-    final duration = ref.watch(playerProvider.select((s) => s.duration));
-    final progress = duration.inMilliseconds > 0
-        ? (position.inMilliseconds / duration.inMilliseconds).clamp(0.0, 1.0)
+    final positionSeconds = ref.watch(
+      playerProvider.select((s) => s.position.inSeconds),
+    );
+    final durationSeconds = ref.watch(
+      playerProvider.select((s) => s.duration.inSeconds),
+    );
+    final progress = durationSeconds > 0
+        ? (positionSeconds / durationSeconds).clamp(0.0, 1.0)
         : 0.0;
 
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: FractionallySizedBox(
-        widthFactor: progress,
-        child: Container(
-          height: 2,
-          color: Theme.of(context).colorScheme.primary,
+    return RepaintBoundary(
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: FractionallySizedBox(
+          widthFactor: progress,
+          child: Container(
+            height: 2,
+            color: Theme.of(context).colorScheme.primary,
+          ),
         ),
       ),
     );

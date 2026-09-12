@@ -27,6 +27,9 @@ final downloadedSongsProvider = FutureProvider.autoDispose<List<Song>>(((
 class DownloadService {
   late final Dio _dio;
   final SharedPreferences _prefs;
+  // 下载取消 + 并发控制：之前无 CancelToken、无上限，连续点多首打满带宽
+  final Map<int, CancelToken> _activeTokens = {};
+  int _runningCount = 0;
 
   DownloadService(this._prefs) {
     _dio = Dio(
@@ -39,7 +42,17 @@ class DownloadService {
   }
 
   void dispose() {
+    for (final token in _activeTokens.values) {
+      try {
+        token.cancel('dispose');
+      } catch (_) {}
+    }
+    _activeTokens.clear();
     _dio.close(force: true);
+  }
+
+  void cancelDownload(int songId) {
+    _activeTokens[songId]?.cancel('user cancel');
   }
 
   Future<String> get _localPath async {
@@ -202,16 +215,46 @@ class DownloadService {
   Future<void> downloadSong(
     Song song, {
     void Function(int, int)? onProgress,
+    CancelToken? cancelToken,
   }) async {
     if (song.url == null) return;
 
-    final file = await getLocalFile(song.id);
-    await _ensureParentExists(file);
+    // 并发上限：超过则等待，避免多首并行打满带宽
+    while (_runningCount >= AppConstants.maxConcurrentDownloads) {
+      await Future.delayed(const Duration(milliseconds: 200));
+    }
+    final token = cancelToken ?? CancelToken();
+    _activeTokens[song.id] = token;
+    _runningCount++;
+    try {
+      final file = await getLocalFile(song.id);
+      await _ensureParentExists(file);
+      // 原子写：先 .part 再 rename，杀进程不留残缺 mp3
+      final partFile = File('${file.path}.part');
+      if (await partFile.exists()) {
+        try {
+          await partFile.delete();
+        } catch (_) {}
+      }
+      await _downloadToFile(
+        song.url!,
+        partFile.path,
+        onProgress: onProgress,
+        cancelToken: token,
+      );
+      if (await file.exists()) {
+        try {
+          await file.delete();
+        } catch (_) {}
+      }
+      await partFile.rename(file.path);
 
-    await _downloadToFile(song.url!, file.path, onProgress: onProgress);
-
-    // Save to manifest
-    await _saveToManifest(song);
+      // Save to manifest（轻快照去歌词）
+      await _saveToManifest(song);
+    } finally {
+      _activeTokens.remove(song.id);
+      _runningCount--;
+    }
   }
 
   /// 带重试 + 指数退避的下载：之前无重试、无超时，弱网永久挂起且异常直接 rethrow
@@ -219,6 +262,7 @@ class DownloadService {
     String url,
     String path, {
     void Function(int, int)? onProgress,
+    CancelToken? cancelToken,
   }) async {
     Object? lastError;
     for (var attempt = 0; attempt < AppConstants.downloadMaxRetries; attempt++) {
@@ -227,10 +271,12 @@ class DownloadService {
           url,
           path,
           onReceiveProgress: onProgress,
+          cancelToken: cancelToken,
           options: Options(headers: AppConstants.defaultHeaders),
         );
         return;
       } on DioException catch (e) {
+        if (e.type == DioExceptionType.cancel) rethrow;
         lastError = e;
         // 最后一试失败则清理残缺文件后抛出可读错误
         if (attempt == AppConstants.downloadMaxRetries - 1) {
@@ -274,7 +320,7 @@ class DownloadService {
     }
 
     if (!exists) {
-      downloaded.add(json.encode(song.toJson()));
+      downloaded.add(json.encode(song.toCacheJson()));
       await _prefs.setStringList(AppConstants.spDownloadedSongs, downloaded);
     }
   }
@@ -283,23 +329,49 @@ class DownloadService {
     final List<String> downloaded =
         _prefs.getStringList(AppConstants.spDownloadedSongs) ?? [];
 
-    final songs = <Song>[];
-    final validFiles = <String>[];
-
-    // Verify files still exist
+    final parsed = <Song>[];
     for (final item in downloaded) {
       final map = _safeDecodeManifest(item);
       if (map == null) continue;
-      Song song;
       try {
-        song = Song.fromManifest(map);
+        parsed.add(Song.fromManifest(map));
       } catch (_) {
         continue;
       }
-      final file = await getLocalFile(song.id);
-      if (await file.exists()) {
-        songs.add(song);
-        validFiles.add(item);
+    }
+    if (parsed.isEmpty) {
+      if (downloaded.isNotEmpty) {
+        await _prefs.setStringList(AppConstants.spDownloadedSongs, []);
+      }
+      return [];
+    }
+
+    // 并行 exists：之前串行 N 次 IO，100 首首开慢
+    final checks = await Future.wait(
+      parsed.map((song) async {
+        try {
+          final file = await getLocalFile(song.id);
+          return (song: song, exists: await file.exists());
+        } catch (_) {
+          return (song: song, exists: false);
+        }
+      }),
+    );
+
+    final songs = <Song>[];
+    final validFiles = <String>[];
+    final rawById = <int, String>{};
+    for (final item in downloaded) {
+      final map = _safeDecodeManifest(item);
+      final id = map?['id'];
+      final idInt = id is int ? id : int.tryParse('$id');
+      if (idInt != null) rawById[idInt] = item;
+    }
+    for (final c in checks) {
+      if (c.exists) {
+        songs.add(c.song);
+        final raw = rawById[c.song.id];
+        if (raw != null) validFiles.add(raw);
       }
     }
 

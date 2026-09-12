@@ -12,6 +12,8 @@ import '../../models/playlist.dart';
 import '../../models/song.dart';
 import '../../providers/player_provider.dart';
 import '../../utils/constants.dart';
+import '../../utils/toast_utils.dart';
+import '../common/error_view.dart';
 import '../common/mini_player.dart';
 import '../common/song_list_tile.dart';
 
@@ -32,6 +34,7 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
   bool _isLoadingMore = false;
   bool _hasMore = true;
   String? _errorMessage;
+  bool _loadMoreError = false;
 
   @override
   void initState() {
@@ -77,7 +80,11 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
   }
 
   Future<void> _loadMore() async {
-    setState(() => _isLoadingMore = true);
+    if (_isLoadingMore) return;
+    setState(() {
+      _isLoadingMore = true;
+      _loadMoreError = false;
+    });
 
     final service = ref.read(fysgServiceProvider);
     final nextPage = _currentPage + 1;
@@ -99,9 +106,23 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
         });
       },
       err: (_) {
-        setState(() => _isLoadingMore = false);
+        setState(() {
+          _isLoadingMore = false;
+          _loadMoreError = true;
+        });
+        ToastUtils.showToast(context, AppLocalizations.of(context).loadFailed);
       },
     );
+  }
+
+  Future<void> _onRefresh() async {
+    setState(() {
+      _currentPage = 0;
+      _hasMore = true;
+      _loadMoreError = false;
+      _errorMessage = null;
+    });
+    await _fetchInitialSongs();
   }
 
   @override
@@ -121,7 +142,9 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
         child: Column(
           children: [
             Expanded(
-              child: CustomScrollView(
+              child: RefreshIndicator(
+                onRefresh: _onRefresh,
+                child: CustomScrollView(
                 controller: _scrollController,
                 scrollCacheExtent: ScrollCacheExtent.pixels(
                   AppConstants.listCacheExtent,
@@ -149,6 +172,7 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
                               child: CachedNetworkImage(
                                 imageUrl: widget.playlist.cover!,
                                 httpHeaders: ImageCacheService.headers,
+                                cacheManager: ImageCacheService.cacheManager,
                                 fit: BoxFit.cover,
                                 // 头图按显示尺寸解码，避免全分辨率 OOM
                                 memCacheWidth: 800,
@@ -195,27 +219,30 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
                   ),
                   if (_errorMessage != null)
                     SliverFillRemaining(
-                      child: Center(
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
+                      child: ErrorView(
+                        message: _errorMessage!,
+                        onRetry: () {
+                          setState(() {
+                            _errorMessage = null;
+                            _isLoading = true;
+                          });
+                          _fetchInitialSongs();
+                        },
+                      ),
+                    )
+                  else if (!_isLoading && _songs.isEmpty)
+                    // 空歌单提示：之前是空白 + 100 高度占位，用户以为卡死
+                    SliverFillRemaining(
+                      hasScrollBody: false,
+                      child: RefreshIndicator(
+                        onRefresh: _onRefresh,
+                        child: ListView(
                           children: [
-                            const Icon(
-                              Icons.error_outline,
-                              size: 48,
-                              color: Colors.grey,
-                            ),
-                            const SizedBox(height: 16),
-                            Text(_errorMessage!),
-                            const SizedBox(height: 16),
-                            ElevatedButton(
-                              onPressed: () {
-                                setState(() {
-                                  _errorMessage = null;
-                                  _isLoading = true;
-                                });
-                                _fetchInitialSongs();
-                              },
-                              child: Text(AppLocalizations.of(context).retry),
+                            const SizedBox(height: 120),
+                            EmptyView(
+                              message: AppLocalizations.of(
+                                context,
+                              ).emptyPlaylist,
                             ),
                           ],
                         ),
@@ -299,9 +326,14 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
                           child: Center(child: CircularProgressIndicator()),
                         ),
                       ),
+                    if (_loadMoreError)
+                      SliverToBoxAdapter(
+                        child: LoadMoreErrorFooter(onRetry: _loadMore),
+                      ),
                     const SliverToBoxAdapter(child: SizedBox(height: 100)),
                   ],
                 ],
+                ),
               ),
             ),
             const MiniPlayer(),

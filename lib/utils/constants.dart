@@ -69,4 +69,20 @@ class AppConstants {
   static const Duration searchDebounceMs = Duration(milliseconds: 300);
   // 列表预构建范围：之前全 800，过大；按机型取 250~500
   static const double listCacheExtent = 400.0;
+
+  // 图片磁盘缓存：长列表 + 大封面双解码，限制数量与有效期
+  static const int imageCacheMaxObjects = 200;
+  static const Duration imageCacheStalePeriod = Duration(days: 7);
+
+  // 后台播放状态同步节流：之前 position ~10次/s 全量跨 isolate
+  static const Duration playbackSyncMinInterval = Duration(seconds: 1);
+
+  // position state 节流：100ms tick -> 500ms 落 state，秒级 UI 足够
+  static const Duration positionStateMinInterval = Duration(milliseconds: 500);
+
+  // 网络重试：弱网/5xx 指数退避
+  static const int networkMaxRetries = 2;
+
+  // 下载并发上限
+  static const int maxConcurrentDownloads = 2;
 }

@@ -31,7 +31,8 @@ class QueuePersistence {
     if (_disposed || queue.isEmpty) return;
     try {
       final prefs = _ref.read(sharedPreferencesProvider);
-      final encoded = queue.map((s) => json.encode(s.toJson())).toList();
+      // 轻量快照去歌词：500 首 * 几十KB LRC 会撑爆 SP 且启动 decode 卡顿
+      final encoded = queue.map((s) => json.encode(s.toCacheJson())).toList();
       await prefs.setStringList(AppConstants.spQueueCacheKey, encoded);
     } catch (_) {
       // 写缓存失败不影响播放，忽略

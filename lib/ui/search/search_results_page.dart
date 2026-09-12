@@ -9,6 +9,8 @@ import '../../l10n/app_localizations.dart';
 import '../../models/song.dart';
 import '../../providers/player_provider.dart';
 import '../../utils/constants.dart';
+import '../../utils/toast_utils.dart';
+import '../common/error_view.dart';
 import '../common/mini_player.dart';
 import '../common/song_list_tile.dart';
 
@@ -33,6 +35,8 @@ class _SearchResultsPageState extends ConsumerState<SearchResultsPage> {
   bool _hasMore = false;
   late String _currentQuery;
   String? _errorMessage;
+  bool _loadMoreError = false;
+  int _suggestToken = 0;
 
   @override
   void initState() {
@@ -69,6 +73,7 @@ class _SearchResultsPageState extends ConsumerState<SearchResultsPage> {
         }
         return;
       }
+      final token = ++_suggestToken;
 
       if (mounted) setState(() => _isLoadingSuggestions = true);
       try {
@@ -76,7 +81,7 @@ class _SearchResultsPageState extends ConsumerState<SearchResultsPage> {
             .read(fysgServiceProvider)
             .getSearchSuggestions(q);
 
-        if (!mounted) return;
+        if (!mounted || token != _suggestToken) return;
 
         result.when(
           ok: (suggestions) {
@@ -143,7 +148,11 @@ class _SearchResultsPageState extends ConsumerState<SearchResultsPage> {
   }
 
   Future<void> _loadMore() async {
-    setState(() => _isLoadingMore = true);
+    if (_isLoadingMore) return;
+    setState(() {
+      _isLoadingMore = true;
+      _loadMoreError = false;
+    });
     final nextPage = _currentPage + 1;
     try {
       final result = await ref
@@ -163,28 +172,46 @@ class _SearchResultsPageState extends ConsumerState<SearchResultsPage> {
           });
         },
         err: (_) {
-          setState(() => _isLoadingMore = false);
+          setState(() {
+            _isLoadingMore = false;
+            _loadMoreError = true;
+          });
+          if (mounted) {
+            ToastUtils.showToast(
+              context,
+              AppLocalizations.of(context).loadFailed,
+            );
+          }
         },
       );
     } catch (e) {
-      if (mounted) setState(() => _isLoadingMore = false);
+      if (mounted) {
+        setState(() {
+          _isLoadingMore = false;
+          _loadMoreError = true;
+        });
+      }
     }
   }
 
   void _newSearch(String query) async {
-    if (query.isEmpty || query == _currentQuery) return;
+    final trimmed = query.trim();
+    if (trimmed.isEmpty || trimmed == _currentQuery) return;
+    FocusScope.of(context).unfocus();
 
-    await ref.read(searchHistoryServiceProvider).addQuery(query);
+    await ref.read(searchHistoryServiceProvider).addQuery(trimmed);
     ref.invalidate(searchHistoryProvider);
 
     setState(() {
-      _currentQuery = query;
+      _currentQuery = trimmed;
       _currentPage = 0;
       _results = [];
       _isLoading = true;
       _errorMessage = null;
       _suggestions = [];
+      _loadMoreError = false;
     });
+    _searchController.text = trimmed;
     _performInitialSearch();
   }
 
@@ -218,6 +245,7 @@ class _SearchResultsPageState extends ConsumerState<SearchResultsPage> {
                   controller: _searchController,
                   style: const TextStyle(fontSize: 16),
                   textAlignVertical: TextAlignVertical.center,
+                  textInputAction: TextInputAction.search,
                   decoration: InputDecoration(
                     hintText: AppLocalizations.of(context).searchHint,
                     border: InputBorder.none,
@@ -269,47 +297,47 @@ class _SearchResultsPageState extends ConsumerState<SearchResultsPage> {
                   : _isLoading
                   ? const Center(child: CircularProgressIndicator())
                   : _errorMessage != null
-                  ? Center(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Icon(
-                            Icons.error_outline,
-                            size: 48,
-                            color: Colors.grey,
-                          ),
-                          const SizedBox(height: 16),
-                          Text(_errorMessage!),
-                        ],
-                      ),
+                  ? ErrorView(
+                      message: _errorMessage!,
+                      onRetry: _performInitialSearch,
                     )
                   : _results.isEmpty
                   ? Center(child: Text(AppLocalizations.of(context).noResults))
-                  : ListView.builder(
-                      controller: _scrollController,
-                      scrollCacheExtent: ScrollCacheExtent.pixels(
-                        AppConstants.listCacheExtent,
-                      ),
-                      addAutomaticKeepAlives: false,
-                      itemCount: _results.length + (_isLoadingMore ? 1 : 0),
-                      itemBuilder: (context, index) {
-                        if (index == _results.length) {
-                          return const Padding(
-                            padding: EdgeInsets.all(16),
-                            child: Center(child: CircularProgressIndicator()),
+                  : RefreshIndicator(
+                      onRefresh: _performInitialSearch,
+                      child: ListView.builder(
+                        controller: _scrollController,
+                        scrollCacheExtent: ScrollCacheExtent.pixels(
+                          AppConstants.listCacheExtent,
+                        ),
+                        addAutomaticKeepAlives: false,
+                        itemCount:
+                            _results.length +
+                            ((_isLoadingMore || _loadMoreError) ? 1 : 0),
+                        itemBuilder: (context, index) {
+                          if (index == _results.length) {
+                            if (_loadMoreError) {
+                              return LoadMoreErrorFooter(onRetry: _loadMore);
+                            }
+                            return const Padding(
+                              padding: EdgeInsets.all(16),
+                              child: Center(
+                                child: CircularProgressIndicator(),
+                              ),
+                            );
+                          }
+                          final song = _results[index];
+                          return SongListTile(
+                            key: ValueKey(song.id),
+                            song: song,
+                            onTap: () {
+                              ref
+                                  .read(playerProvider.notifier)
+                                  .logQueue(_results, index);
+                            },
                           );
-                        }
-                        final song = _results[index];
-                        return SongListTile(
-                          key: ValueKey(song.id),
-                          song: song,
-                          onTap: () {
-                            ref
-                                .read(playerProvider.notifier)
-                                .logQueue(_results, index);
-                          },
-                        );
-                      },
+                        },
+                      ),
                     ),
             ),
             const MiniPlayer(),

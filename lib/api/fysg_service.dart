@@ -27,12 +27,34 @@ class FysgService {
   }
 
   Future<http.Response> _get(Uri uri) {
-    return _client
-        .get(uri, headers: AppConstants.defaultHeaders)
-        .timeout(
-          AppConstants.networkTimeout,
-          onTimeout: () => throw AppError.network('请求超时，请检查网络后重试'),
-        );
+    return _getWithRetry(uri);
+  }
+
+  /// 弱网/5xx 指数退避重试 2 次：之前单次 timeout 直接报错，地铁场景全挂
+  Future<http.Response> _getWithRetry(Uri uri) async {
+    Object? lastError;
+    for (var attempt = 0; attempt <= AppConstants.networkMaxRetries; attempt++) {
+      try {
+        return await _client
+            .get(uri, headers: AppConstants.defaultHeaders)
+            .timeout(
+              AppConstants.networkTimeout,
+              onTimeout: () => throw AppError.network('请求超时，请检查网络后重试'),
+            );
+      } on AppError catch (e) {
+        // 超时可重试；明确的 4xx 由上层状态码处理，不在此重试
+        if (!e.message.contains('超时')) rethrow;
+        lastError = e;
+      } catch (e) {
+        lastError = e;
+      }
+      if (attempt < AppConstants.networkMaxRetries) {
+        await Future.delayed(Duration(milliseconds: 400 * (1 << attempt)));
+      }
+    }
+    final err = lastError;
+    if (err is AppError) throw err;
+    throw AppError.network('请求超时，请检查网络后重试');
   }
 
   /// 统一状态码映射：之前仅分 200/>=500/else，401/404/429 全归“请求失败”

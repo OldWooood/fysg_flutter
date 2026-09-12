@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../api/search_history_service.dart';
 import '../../l10n/app_localizations.dart';
 import '../../providers/player_provider.dart';
+import '../../utils/constants.dart';
 import 'search_results_page.dart';
 
 class SearchPage extends ConsumerStatefulWidget {
@@ -20,6 +21,8 @@ class _SearchPageState extends ConsumerState<SearchPage> {
   Timer? _debounce;
   List<Map<String, dynamic>> _suggestions = [];
   bool _isLoadingSuggestions = false;
+  // 搜索竞态 token：慢请求后到不覆盖快请求
+  int _suggestToken = 0;
 
   @override
   void initState() {
@@ -31,6 +34,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     final query = _searchController.text;
     if (query.isEmpty) {
       _debounce?.cancel();
+      _suggestToken++;
       setState(() {
         _suggestions = [];
         _isLoadingSuggestions = false;
@@ -39,9 +43,10 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     }
 
     _debounce?.cancel();
-    _debounce = Timer(const Duration(milliseconds: 300), () async {
+    _debounce = Timer(AppConstants.searchDebounceMs, () async {
       final currentQuery = _searchController.text;
       if (currentQuery.isEmpty) return;
+      final token = ++_suggestToken;
 
       if (mounted) setState(() => _isLoadingSuggestions = true);
       try {
@@ -49,7 +54,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
             .read(fysgServiceProvider)
             .getSearchSuggestions(currentQuery);
 
-        if (!mounted) return;
+        if (!mounted || token != _suggestToken) return;
 
         result.when(
           ok: (suggestions) {
@@ -63,21 +68,25 @@ class _SearchPageState extends ConsumerState<SearchPage> {
           },
         );
       } catch (e) {
-        if (mounted) setState(() => _isLoadingSuggestions = false);
+        if (mounted && token == _suggestToken) {
+          setState(() => _isLoadingSuggestions = false);
+        }
       }
     });
   }
 
   Future<void> _performSearch(String query) async {
-    if (query.isEmpty) return;
+    final trimmed = query.trim();
+    if (trimmed.isEmpty) return;
+    FocusScope.of(context).unfocus();
 
-    await ref.read(searchHistoryServiceProvider).addQuery(query);
+    await ref.read(searchHistoryServiceProvider).addQuery(trimmed);
     ref.invalidate(searchHistoryProvider);
     if (!mounted) return;
 
     Navigator.push(
       context,
-      MaterialPageRoute(builder: (context) => SearchResultsPage(query: query)),
+      MaterialPageRoute(builder: (context) => SearchResultsPage(query: trimmed)),
     );
   }
 
@@ -111,9 +120,11 @@ class _SearchPageState extends ConsumerState<SearchPage> {
               Expanded(
                 child: TextField(
                   controller: _searchController,
-                  autofocus: true,
+                  // 常驻 Tab 切过来自动弹键盘遮挡历史，改为手动聚焦
+                  autofocus: false,
                   style: const TextStyle(fontSize: 16),
                   textAlignVertical: TextAlignVertical.center,
+                  textInputAction: TextInputAction.search,
                   decoration: InputDecoration(
                     hintText: AppLocalizations.of(context).searchHint,
                     border: InputBorder.none,
@@ -193,6 +204,39 @@ class _SearchPageState extends ConsumerState<SearchPage> {
                           ),
                           TextButton(
                             onPressed: () async {
+                              final confirmed = await showDialog<bool>(
+                                context: context,
+                                builder: (context) => AlertDialog(
+                                  title: Text(
+                                    AppLocalizations.of(
+                                      context,
+                                    ).clearHistory,
+                                  ),
+                                  content: Text(
+                                    AppLocalizations.of(
+                                      context,
+                                    ).clearHistoryConfirm,
+                                  ),
+                                  actions: [
+                                    TextButton(
+                                      onPressed: () => Navigator.of(
+                                        context,
+                                      ).pop(false),
+                                      child: Text(
+                                        AppLocalizations.of(context).cancel,
+                                      ),
+                                    ),
+                                    TextButton(
+                                      onPressed: () =>
+                                          Navigator.of(context).pop(true),
+                                      child: Text(
+                                        AppLocalizations.of(context).confirm,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              );
+                              if (confirmed != true) return;
                               await ref
                                   .read(searchHistoryServiceProvider)
                                   .clearHistory();
@@ -243,12 +287,48 @@ class _SearchPageState extends ConsumerState<SearchPage> {
       itemCount: _suggestions.length,
       itemBuilder: (context, index) {
         final suggestion = _suggestions[index];
+        final name = '${suggestion['name'] ?? ''}';
+        final artist = suggestion['artist'] is Map
+            ? '${(suggestion['artist'] as Map)['name'] ?? ''}'
+            : '${suggestion['artist'] ?? suggestion['author'] ?? ''}';
         return ListTile(
           leading: Icon(Icons.search, color: Theme.of(context).hintColor),
-          title: Text(suggestion['name'] ?? ''),
-          onTap: () => _performSearch(suggestion['name'] ?? ''),
+          title: _highlightQuery(name, _searchController.text, context),
+          subtitle: artist.isEmpty ? null : Text(
+            artist,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          onTap: () => _performSearch(name),
         );
       },
+    );
+  }
+
+  /// 搜索关键字高亮：之前只显示歌名无反馈
+  Widget _highlightQuery(String text, String query, BuildContext context) {
+    final q = query.trim().toLowerCase();
+    if (q.isEmpty || !text.toLowerCase().contains(q)) {
+      return Text(text, maxLines: 1, overflow: TextOverflow.ellipsis);
+    }
+    final lower = text.toLowerCase();
+    final start = lower.indexOf(q);
+    final end = start + q.length;
+    final primary = Theme.of(context).colorScheme.primary;
+    return RichText(
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      text: TextSpan(
+        style: DefaultTextStyle.of(context).style,
+        children: [
+          TextSpan(text: text.substring(0, start)),
+          TextSpan(
+            text: text.substring(start, end),
+            style: TextStyle(color: primary, fontWeight: FontWeight.bold),
+          ),
+          TextSpan(text: text.substring(end)),
+        ],
+      ),
     );
   }
 }

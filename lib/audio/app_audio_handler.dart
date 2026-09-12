@@ -134,6 +134,8 @@ class AppAudioService {
         androidNotificationChannelName: 'Music Playback',
         androidNotificationOngoing: true,
         androidStopForegroundOnPause: true,
+        // 点通知回前台；之前缺失导致部分机型点通知无反应
+        androidNotificationClickStartsActivity: true,
       ),
     );
   }

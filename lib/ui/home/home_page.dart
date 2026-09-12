@@ -7,6 +7,8 @@ import '../../models/song.dart';
 import '../../providers/player_provider.dart';
 import '../../api/recently_played_service.dart' show recentSongsProvider;
 import '../../utils/constants.dart';
+import '../../utils/toast_utils.dart';
+import '../common/error_view.dart';
 import '../common/song_cover.dart';
 import '../common/song_list_tile.dart';
 import '../recent/recently_played_page.dart';
@@ -26,6 +28,7 @@ class _HomePageState extends ConsumerState<HomePage> {
   bool _isLoadingMore = false;
   bool _hasMore = true;
   String? _errorMessage;
+  bool _loadMoreError = false;
 
   @override
   void initState() {
@@ -46,6 +49,8 @@ class _HomePageState extends ConsumerState<HomePage> {
         setState(() {
           _recommendedSongs = songs;
           _isLoading = false;
+          _errorMessage = null;
+          _currentPage = 0;
           _hasMore = songs.length >= AppConstants.defaultPageSize;
         });
       },
@@ -70,7 +75,10 @@ class _HomePageState extends ConsumerState<HomePage> {
 
   Future<void> _loadMore() async {
     if (_isLoadingMore || !_hasMore) return;
-    setState(() => _isLoadingMore = true);
+    setState(() {
+      _isLoadingMore = true;
+      _loadMoreError = false;
+    });
 
     final nextPage = _currentPage + 1;
     final result = await ref
@@ -89,7 +97,11 @@ class _HomePageState extends ConsumerState<HomePage> {
         });
       },
       err: (_) {
-        setState(() => _isLoadingMore = false);
+        setState(() {
+          _isLoadingMore = false;
+          _loadMoreError = true;
+        });
+        ToastUtils.showToast(context, AppLocalizations.of(context).loadFailed);
       },
     );
   }
@@ -104,7 +116,9 @@ class _HomePageState extends ConsumerState<HomePage> {
   Widget build(BuildContext context) {
     final recentAsync = ref.watch(recentSongsProvider);
 
-    return CustomScrollView(
+    return RefreshIndicator(
+      onRefresh: _fetchInitialData,
+      child: CustomScrollView(
       controller: _scrollController,
       scrollCacheExtent: ScrollCacheExtent.pixels(
         AppConstants.listCacheExtent,
@@ -211,26 +225,15 @@ class _HomePageState extends ConsumerState<HomePage> {
         // Error State
         if (_errorMessage != null)
           SliverToBoxAdapter(
-            child: Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(Icons.error_outline, size: 48, color: Colors.grey),
-                  const SizedBox(height: 16),
-                  Text(_errorMessage!),
-                  const SizedBox(height: 16),
-                  ElevatedButton(
-                    onPressed: () {
-                      setState(() {
-                        _errorMessage = null;
-                        _isLoading = true;
-                      });
-                      _fetchInitialData();
-                    },
-                    child: Text(AppLocalizations.of(context).retry),
-                  ),
-                ],
-              ),
+            child: ErrorView(
+              message: _errorMessage!,
+              onRetry: () {
+                setState(() {
+                  _errorMessage = null;
+                  _isLoading = true;
+                });
+                _fetchInitialData();
+              },
             ),
           )
         // Loading State
@@ -247,6 +250,9 @@ class _HomePageState extends ConsumerState<HomePage> {
             delegate: SliverChildBuilderDelegate(
               (context, index) {
                 if (index == _recommendedSongs.length) {
+                  if (_loadMoreError) {
+                    return LoadMoreErrorFooter(onRetry: _loadMore);
+                  }
                   return _isLoadingMore
                       ? const Padding(
                           padding: EdgeInsets.all(20),
@@ -281,6 +287,7 @@ class _HomePageState extends ConsumerState<HomePage> {
             ),
           ),
       ],
+      ),
     );
   }
 }
