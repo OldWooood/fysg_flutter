@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:just_audio/just_audio.dart';
 
@@ -13,7 +12,10 @@ import '../api/recently_played_service.dart'
         RecentlyPlayedService;
 import '../audio/app_audio_handler.dart';
 import '../models/song.dart';
+import '../utils/app_log.dart';
 import '../utils/constants.dart';
+import 'prefetch_manager.dart';
+import 'queue_expander.dart';
 import 'queue_persistence.dart';
 import 'shared_preferences_provider.dart';
 import 'song_resolver.dart';
@@ -123,15 +125,9 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
   bool _suppressIndexSync = false;
   ProcessingState _processingState = ProcessingState.idle;
   final Map<int, int> _songLoadRetryCount = {};
-  int? _lastPrefetchSongId;
-  bool _isPrefetching = false;
-  bool _prefetchCacheLoaded = false;
-  Set<int> _prefetchCachedIds = {};
   bool _queueStateRestored = false;
   int? _lastHistorySongId;
   DateTime _lastPositionPersist = DateTime.now();
-  // 已下载 id 内存缓存：避免 _createAudioSource 每次 exists() IO
-  Set<int>? _downloadedIdsCache;
   // 后台同步节流：position ~10次/s，不节流则持续跨 isolate
   DateTime _lastPlaybackSync = DateTime.fromMillisecondsSinceEpoch(0);
   bool? _lastSyncPlaying;
@@ -140,6 +136,8 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
   Timer? _sleepTimer;
   int _consecutiveAutoSkips = 0;
   late final QueuePersistence _persistence;
+  late final QueueExpander _expander;
+  late final PrefetchManager _prefetch;
   static const _songResolver = SongResolver();
 
   /// 冷启动恢复队列时待使用的续播位置，
@@ -160,6 +158,13 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
     _downloadService = ref.watch(downloadServiceProvider);
     _recentService = ref.watch(recentlyPlayedServiceProvider);
     _persistence = QueuePersistence(ref);
+    _expander = QueueExpander(
+      service: _service,
+      downloads: _downloadService,
+      songDetailsCache: _songDetailsCache,
+      resolver: _songResolver,
+    );
+    _prefetch = PrefetchManager(downloads: _downloadService);
     // build 重跑时实例保留：只初始化一次，避免重复订阅/恢复队列
     if (!_initialized) {
       _initialized = true;
@@ -193,7 +198,7 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
       await _audioPlayer.setLoopMode(LoopMode.all);
       await _audioPlayer.setShuffleModeEnabled(false);
     } catch (e) {
-      debugPrint('Error initializing audio player: $e');
+      AppLog.d('Error initializing audio player: $e');
     }
 
     // 接入通知栏/锁屏/耳机的播放控制指令
@@ -215,7 +220,7 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
           }
         },
         onError: (Object e, StackTrace st) {
-          debugPrint('PlayerStateStream error: $e');
+          AppLog.d('PlayerStateStream error: $e');
         },
       ),
     );
@@ -227,7 +232,7 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
           if (index != null && index < state.queue.length && _mounted) {
             _songLoadRetryCount[state.queue[index].id] = 0;
             _consecutiveAutoSkips = 0;
-            _lastPrefetchSongId = null;
+            _prefetch.resetForNewSong();
             final song = state.queue[index];
             if (state.currentIndex != index) {
               state = state.copyWith(currentIndex: index, currentSong: song);
@@ -238,7 +243,7 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
           }
         },
         onError: (Object e, StackTrace st) {
-          debugPrint('CurrentIndexStream error: $e');
+          AppLog.d('CurrentIndexStream error: $e');
         },
       ),
     );
@@ -263,7 +268,7 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
           _maybePrefetchNext(position);
         },
         onError: (Object e, StackTrace st) {
-          debugPrint('PositionStream error: $e');
+          AppLog.d('PositionStream error: $e');
         },
       ),
     );
@@ -275,7 +280,7 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
           state = state.copyWith(speed: speed);
         },
         onError: (Object e, StackTrace st) {
-          debugPrint('SpeedStream error: $e');
+          AppLog.d('SpeedStream error: $e');
         },
       ),
     );
@@ -289,7 +294,7 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
           _syncBackgroundPlayback();
         },
         onError: (Object e, StackTrace st) {
-          debugPrint('DurationStream error: $e');
+          AppLog.d('DurationStream error: $e');
         },
       ),
     );
@@ -297,7 +302,7 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
     // 注：之前这里有个空 playbackEventStream 监听只为 debug，
     // just_audio 的 LoopMode 已处理 completed 自动下一首，无需手动监听；
     // 真正的播放错误走 playerStateStream/各 onError + _handleSongLoadFailure。
-    // 如需排查卡顿，可临时加回带 debugPrint 的监听，不要提交空监听。
+    // 如需排查卡顿，可临时加回带 AppLog.d 的监听，不要提交空监听。
 
     await _restoreQueueState();
   }
@@ -308,7 +313,6 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
     int retryCount = 0,
   }) async {
     try {
-      await _loadPrefetchCacheIfNeeded();
       // If we are playing from a queue and this song is in the queue, just seek to it
       if (keepQueue && state.queue.isNotEmpty) {
         final index = state.queue.indexWhere((s) => s.id == song.id);
@@ -322,7 +326,7 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
       // Single song or new queue
       await logQueue([song], 0);
     } catch (e) {
-      debugPrint("Error playing song (retry $retryCount): $e");
+      AppLog.d("Error playing song (retry $retryCount): $e");
       if (retryCount < AppConstants.maxSongLoadRetries) {
         await Future.delayed(const Duration(seconds: 1));
         return playSong(song, keepQueue: keepQueue, retryCount: retryCount + 1);
@@ -336,7 +340,7 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
     if (currentSong == null) return;
     // 单曲队列下无下一首可跳，避免 next(auto:true) 死循环跳歌
     if (state.queue.length <= 1) {
-      debugPrint(
+      AppLog.d(
         'Single-song queue, stop retry for ${currentSong.id}, reason: $reason',
       );
       _songLoadRetryCount[currentSong.id] = 0;
@@ -347,7 +351,7 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
     _songLoadRetryCount[currentSong.id] = retries;
 
     if (retries <= AppConstants.maxSongLoadRetries) {
-      debugPrint(
+      AppLog.d(
         'Retry loading song ${currentSong.id} ($retries/${AppConstants.maxSongLoadRetries}), reason: $reason',
       );
       try {
@@ -356,20 +360,20 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
         _consecutiveAutoSkips = 0;
         return;
       } catch (e) {
-        debugPrint('Retry failed for song ${currentSong.id}: $e');
+        AppLog.d('Retry failed for song ${currentSong.id}: $e');
       }
     }
 
     // 连续自动跳歌熔断：重试耗尽的坏资源连续出现时停下来，而不是无限 next()
     _consecutiveAutoSkips++;
     if (_consecutiveAutoSkips > AppConstants.maxConsecutiveAutoSkips) {
-      debugPrint(
+      AppLog.d(
         'Too many consecutive auto-skips ($_consecutiveAutoSkips), stop auto-next',
       );
       _songLoadRetryCount[currentSong.id] = 0;
       return;
     }
-    debugPrint(
+    AppLog.d(
       'Skip song ${currentSong.id} after retries exhausted, reason: $reason',
     );
     _songLoadRetryCount[currentSong.id] = 0;
@@ -377,27 +381,15 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
   }
 
   void _maybePrefetchNext(Duration position) {
-    final durationMs = state.duration.inMilliseconds;
-    if (durationMs <= 0) return;
-    if (position.inMilliseconds < durationMs ~/ 2) return;
-    if (state.queue.length < 2) return;
-    if (state.currentIndex < 0 || state.currentIndex >= state.queue.length) {
-      return;
-    }
-
     final nextIndex = _resolveNextIndexForPrefetch();
     if (nextIndex == null) return;
     if (nextIndex < 0 || nextIndex >= state.queue.length) return;
-
-    final nextSong = state.queue[nextIndex];
-    if (_lastPrefetchSongId == nextSong.id) return;
-
-    _lastPrefetchSongId = nextSong.id;
-    _maybeUsePrefetched(nextSong).then((used) {
-      if (!used) {
-        _prefetchSong(nextSong);
-      }
-    });
+    _prefetch.maybePrefetch(
+      position: position,
+      duration: state.duration,
+      queue: state.queue,
+      nextSong: state.queue[nextIndex],
+    );
   }
 
   int? _resolveNextIndexForPrefetch() {
@@ -412,74 +404,6 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
     }
   }
 
-  Future<void> _prefetchSong(Song song) async {
-    if (_isPrefetching) return;
-    _isPrefetching = true;
-    try {
-      if (await _downloadService.isDownloaded(song.id)) return;
-      await _downloadService.prefetchSong(song);
-      _prefetchCachedIds.add(song.id);
-    } catch (e) {
-      debugPrint('Prefetch failed for song ${song.id}: $e');
-    } finally {
-      _isPrefetching = false;
-    }
-  }
-
-  Future<void> _loadPrefetchCacheIfNeeded() async {
-    if (_prefetchCacheLoaded) return;
-    _prefetchCachedIds = await _downloadService.listPrefetchedSongIds();
-    _prefetchCacheLoaded = true;
-  }
-
-  Future<bool> _maybeUsePrefetched(Song song) async {
-    if (!_prefetchCacheLoaded) {
-      await _loadPrefetchCacheIfNeeded();
-    }
-    if (!_prefetchCachedIds.contains(song.id)) return false;
-    if (!await _downloadService.isPrefetched(song.id)) {
-      _prefetchCachedIds.remove(song.id);
-      return false;
-    }
-    return true;
-  }
-
-  /// 同步 IO（existsSync）会阻塞 UI 线程，全部改为异步 exists()。
-  /// 已下载 id 常驻内存 Set，命中则零 IO；prefetch/本地并行检查。
-  Future<AudioSource> _createAudioSource(Song song) async {
-    if (_downloadedIdsCache?.contains(song.id) ?? false) {
-      final local = await _downloadService.getLocalFile(song.id);
-      return AudioSource.file(local.path);
-    }
-    final results = await Future.wait([
-      _downloadService.getPrefetchFile(song.id),
-      _downloadService.getLocalFile(song.id),
-    ]);
-    final prefetched = results[0];
-    final localFile = results[1];
-    if (await prefetched.exists()) {
-      _prefetchCachedIds.add(song.id);
-      return AudioSource.file(prefetched.path);
-    }
-
-    if (await localFile.exists()) {
-      (_downloadedIdsCache ??= {}).add(song.id);
-      return AudioSource.file(localFile.path);
-    }
-
-    final url = song.url;
-    if (url == null || url.isEmpty) {
-      throw Exception('Missing audio url for song ${song.id}');
-    }
-
-    return AudioSource.uri(
-      Uri.parse(url),
-      headers: AppConstants.defaultHeaders,
-    );
-  }
-
-  /// 带进度的下载：UI 传 onProgress 显示通知/进度条，支持取消。
-  /// 不传 onProgress 时保持后台 fire-and-forget（兼容旧调用）。
   Future<DownloadResult?> downloadCurrentSong({
     void Function(int received, int total)? onProgress,
   }) async {
@@ -496,28 +420,28 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
         _downloadService
             .downloadSong(song)
             .then((_) {
-              debugPrint('Downloaded ${song.name}');
-              (_downloadedIdsCache ??= {}).add(song.id);
+              AppLog.d('Downloaded ${song.name}');
+              _downloadService.markDownloaded(song.id);
               // 下载完成后刷新"已下载"列表
               if (_mounted) ref.invalidate(downloadedSongsProvider);
             })
             .catchError((Object e) {
-              debugPrint('Download error: $e');
+              AppLog.d('Download error: $e');
             });
         return DownloadResult.started;
       }
 
       try {
         await _downloadService.downloadSong(song, onProgress: onProgress);
-        (_downloadedIdsCache ??= {}).add(song.id);
+        _downloadService.markDownloaded(song.id);
         if (_mounted) ref.invalidate(downloadedSongsProvider);
         return DownloadResult.started;
       } catch (e) {
-        debugPrint('Download error: $e');
+        AppLog.d('Download error: $e');
         return DownloadResult.failed;
       }
     } catch (e) {
-      debugPrint('Download error: $e');
+      AppLog.d('Download error: $e');
       return DownloadResult.failed;
     }
   }
@@ -543,16 +467,31 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
     if (songs.isEmpty) return;
     if (index < 0 || index >= songs.length) return;
 
+    // 超长队列截断：以点击位置为中心保留窗口，避免 500 首全量解析 + 快照膨胀
+    var effectiveSongs = songs;
+    var effectiveIndex = index;
+    if (songs.length > AppConstants.maxQueueItems) {
+      var start = (index - 20).clamp(0, songs.length - 1);
+      var end = (start + AppConstants.maxQueueItems).clamp(0, songs.length);
+      if (end - start < AppConstants.maxQueueItems) {
+        start = (end - AppConstants.maxQueueItems).clamp(0, songs.length);
+      }
+      effectiveSongs = songs.sublist(start, end);
+      effectiveIndex = index - start;
+    }
+    final songsToPlay = effectiveSongs;
+    index = effectiveIndex;
+
     final buildToken = ++_queueBuildToken;
-    final preferred = await _buildPlayableEntry(songs[index]);
+    final preferred = await _expander.buildEntry(songsToPlay[index]);
     if (!_mounted || buildToken != _queueBuildToken) return;
     var firstPlayable = preferred;
     var chosenOriginalIndex = index;
     if (firstPlayable == null) {
-      for (var offset = 0; offset < songs.length; offset++) {
-        final originalIndex = (index + offset) % songs.length;
-        final song = songs[originalIndex];
-        firstPlayable = await _buildPlayableEntry(song);
+      for (var offset = 0; offset < songsToPlay.length; offset++) {
+        final originalIndex = (index + offset) % songsToPlay.length;
+        final song = songsToPlay[originalIndex];
+        firstPlayable = await _expander.buildEntry(song);
         if (!_mounted || buildToken != _queueBuildToken) return;
         if (firstPlayable != null) {
           chosenOriginalIndex = originalIndex;
@@ -562,11 +501,11 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
     }
 
     if (firstPlayable == null) {
-      debugPrint('No playable songs in queue');
+      AppLog.d('No playable songs in queue');
       return;
     }
 
-    final displayQueue = List<Song>.from(songs);
+    final displayQueue = List<Song>.from(songsToPlay);
     final safeDisplayIndex =
         (chosenOriginalIndex >= 0 && chosenOriginalIndex < displayQueue.length)
         ? chosenOriginalIndex
@@ -594,7 +533,7 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
     _audioPlayer.play();
 
     _expandQueueInBackground(
-      songs: songs,
+      songs: songsToPlay,
       currentSongSnapshot: firstPlayable.song,
       buildToken: buildToken,
     );
@@ -617,13 +556,12 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
     if (_queueStateRestored) return;
     _queueStateRestored = true;
 
-    // 使用通过 Riverpod 注入的 SharedPreferences 实例
-    final prefs = ref.read(sharedPreferencesProvider);
-    final raw = prefs.getStringList(AppConstants.spQueueCacheKey);
-    if (raw == null || raw.isEmpty) return;
-
-    final cachedSongs = decodeCachedQueue(raw);
+    // 文件级队列快照（自动回退并迁移旧 SP 数据）
+    final cachedSongs = await _persistence.loadQueueCache();
     if (cachedSongs.isEmpty) return;
+
+    // 使用通过 Riverpod 注入的 SharedPreferences 实例（仅读轻量 index/position）
+    final prefs = ref.read(sharedPreferencesProvider);
 
     final savedIndex = prefs.getInt(AppConstants.spQueueIndexKey) ?? 0;
     final savedId = prefs.getInt(AppConstants.spQueueSongIdKey);
@@ -691,20 +629,10 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
   }) async {
     // 并发解析（本地文件/详情请求混合），保持原始顺序。
     // 邻近优先：先解当前及前后，首屏可更快就绪；并发 3 限流省流量。
-    final entries = List<({Song song, AudioSource source})?>.filled(
-      songs.length,
-      null,
-    );
+    final entries = List<PlayableEntry?>.filled(songs.length, null);
     var startIndex = songs.indexWhere((s) => s.id == currentSongSnapshot.id);
     if (startIndex < 0) startIndex = 0;
-    final order = <int>[];
-    for (var offset = 0; offset < songs.length; offset++) {
-      final fwd = startIndex + offset;
-      if (fwd < songs.length) order.add(fwd);
-      final back = startIndex - offset;
-      if (offset != 0 && back >= 0) order.add(back);
-      if (order.length >= songs.length) break;
-    }
+    final order = QueueExpander.expandOrder(songs.length, startIndex);
     var cursor = 0;
     Future<void> worker() async {
       while (true) {
@@ -712,7 +640,7 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
         if (orderPos >= order.length) return;
         final index = order[orderPos];
         if (!_mounted || buildToken != _queueBuildToken) return;
-        entries[index] = await _buildPlayableEntry(songs[index]);
+        entries[index] = await _expander.buildEntry(songs[index]);
       }
     }
 
@@ -774,31 +702,6 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
     }
   }
 
-  Future<({Song song, AudioSource source})?> _buildPlayableEntry(
-    Song song,
-  ) async {
-    Song resolvedSong = song;
-    try {
-      final source = await _createAudioSource(resolvedSong);
-      return (song: resolvedSong, source: source);
-    } catch (_) {
-      if (resolvedSong.id == 0) return null;
-      final result = await _service.getSongDetails(resolvedSong.id);
-      return result.when(
-        ok: (details) async {
-          _songDetailsCache[resolvedSong.id] = details;
-          resolvedSong = _mergeSong(resolvedSong, details);
-          final source = await _createAudioSource(resolvedSong);
-          return (song: resolvedSong, source: source);
-        },
-        err: (error) {
-          debugPrint('Skip unplayable song ${song.id}: ${error.message}');
-          return null;
-        },
-      );
-    }
-  }
-
   Future<void> ensureCurrentSongDetailsLoaded() async {
     final song = state.currentSong;
     if (song == null) return;
@@ -822,6 +725,9 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
 
     final cached = _songDetailsCache[songId];
     if (cached != null) {
+      // 刷新 expander 共享缓存的 LRU 顺序
+      _songDetailsCache.remove(songId);
+      _songDetailsCache[songId] = cached;
       _mergeSongDetailsIntoState(cached);
       return;
     }
@@ -835,7 +741,7 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
         _mergeSongDetailsIntoState(details);
       },
       err: (error) {
-        debugPrint('Failed to load song details for $songId: ${error.message}');
+        AppLog.d('Failed to load song details for $songId: ${error.message}');
       },
     );
     _songDetailsLoading.remove(songId);

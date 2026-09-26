@@ -23,13 +23,5 @@ class SongResolver {
     );
   }
 
-  bool isSameSong(Song a, Song b) {
-    return a.id == b.id &&
-        a.name == b.name &&
-        a.artist == b.artist &&
-        a.album == b.album &&
-        a.cover == b.cover &&
-        a.url == b.url &&
-        a.lyrics == b.lyrics;
-  }
+  bool isSameSong(Song a, Song b) => a == b;
 }

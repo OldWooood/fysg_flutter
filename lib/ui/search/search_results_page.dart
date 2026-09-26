@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -13,6 +14,7 @@ import '../../utils/toast_utils.dart';
 import '../common/error_view.dart';
 import '../common/mini_player.dart';
 import '../common/song_list_tile.dart';
+import 'search_suggestions.dart';
 
 class SearchResultsPage extends ConsumerStatefulWidget {
   final String query;
@@ -26,6 +28,7 @@ class _SearchResultsPageState extends ConsumerState<SearchResultsPage> {
   final ScrollController _scrollController = ScrollController();
   final TextEditingController _searchController = TextEditingController();
   Timer? _debounce;
+  CancelToken? _suggestCancel;
   List<Map<String, dynamic>> _suggestions = [];
   bool _isLoadingSuggestions = false;
   List<Song> _results = [];
@@ -74,12 +77,15 @@ class _SearchResultsPageState extends ConsumerState<SearchResultsPage> {
         return;
       }
       final token = ++_suggestToken;
+      _suggestCancel?.cancel('new query');
+      final cancelToken = CancelToken();
+      _suggestCancel = cancelToken;
 
       if (mounted) setState(() => _isLoadingSuggestions = true);
       try {
         final result = await ref
             .read(fysgServiceProvider)
-            .getSearchSuggestions(q);
+            .getSearchSuggestions(q, cancelToken: cancelToken);
 
         if (!mounted || token != _suggestToken) return;
 
@@ -90,7 +96,8 @@ class _SearchResultsPageState extends ConsumerState<SearchResultsPage> {
               _isLoadingSuggestions = false;
             });
           },
-          err: (_) {
+          err: (error) {
+            if (error.code == 'cancelled') return;
             setState(() => _isLoadingSuggestions = false);
           },
         );
@@ -117,16 +124,19 @@ class _SearchResultsPageState extends ConsumerState<SearchResultsPage> {
     try {
       final result = await ref
           .read(fysgServiceProvider)
-          .searchSongs(_currentQuery, page: 0);
+          .searchSongsPaged(_currentQuery, page: 0);
 
       if (!mounted) return;
 
       result.when(
-        ok: (results) {
-          final filtered = _filterPlayable(results);
+        ok: (paged) {
+          final filtered = _filterPlayable(paged.items);
           setState(() {
             _results = filtered;
-            _hasMore = results.length >= AppConstants.defaultPageSize;
+            // 精确 hasMore：total 已知时不再靠 length 猜
+            _hasMore = paged.total >= 0
+                ? paged.hasMore
+                : paged.items.length >= AppConstants.defaultPageSize;
             _isLoading = false;
           });
         },
@@ -157,17 +167,19 @@ class _SearchResultsPageState extends ConsumerState<SearchResultsPage> {
     try {
       final result = await ref
           .read(fysgServiceProvider)
-          .searchSongs(_currentQuery, page: nextPage);
+          .searchSongsPaged(_currentQuery, page: nextPage);
 
       if (!mounted) return;
 
       result.when(
-        ok: (songs) {
-          final filtered = _filterPlayable(songs);
+        ok: (paged) {
+          final filtered = _filterPlayable(paged.items);
           setState(() {
             _results.addAll(filtered);
             _currentPage = nextPage;
-            _hasMore = songs.length >= AppConstants.defaultPageSize;
+            _hasMore = paged.total >= 0
+                ? paged.hasMore
+                : paged.items.length >= AppConstants.defaultPageSize;
             _isLoadingMore = false;
           });
         },
@@ -221,6 +233,7 @@ class _SearchResultsPageState extends ConsumerState<SearchResultsPage> {
     _searchController.dispose();
     _scrollController.dispose();
     _debounce?.cancel();
+    _suggestCancel?.cancel('dispose');
     super.dispose();
   }
 
@@ -241,33 +254,30 @@ class _SearchResultsPageState extends ConsumerState<SearchResultsPage> {
               Icon(Icons.search, color: Theme.of(context).hintColor, size: 20),
               const SizedBox(width: 8),
               Expanded(
-                child: TextField(
-                  controller: _searchController,
-                  style: const TextStyle(fontSize: 16),
-                  textAlignVertical: TextAlignVertical.center,
-                  textInputAction: TextInputAction.search,
-                  decoration: InputDecoration(
-                    hintText: AppLocalizations.of(context).searchHint,
-                    border: InputBorder.none,
-                    isDense: true,
-                    contentPadding: const EdgeInsets.symmetric(vertical: 10),
-                    suffixIcon: _searchController.text.isNotEmpty
-                        ? IconButton(
-                            padding: EdgeInsets.zero,
-                            constraints: const BoxConstraints(),
-                            icon: const Icon(Icons.clear, size: 20),
-                            onPressed: () {
-                              _searchController.clear();
-                              setState(() {});
-                            },
-                          )
-                        : null,
+                // 输入框局部重建：之前 onChanged 整页 setState
+                child: ListenableBuilder(
+                  listenable: _searchController,
+                  builder: (context, _) => TextField(
+                    controller: _searchController,
+                    style: const TextStyle(fontSize: 16),
+                    textAlignVertical: TextAlignVertical.center,
+                    textInputAction: TextInputAction.search,
+                    decoration: InputDecoration(
+                      hintText: AppLocalizations.of(context).searchHint,
+                      border: InputBorder.none,
+                      isDense: true,
+                      contentPadding: const EdgeInsets.symmetric(vertical: 10),
+                      suffixIcon: _searchController.text.isNotEmpty
+                          ? IconButton(
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(),
+                              icon: const Icon(Icons.clear, size: 20),
+                              onPressed: _searchController.clear,
+                            )
+                          : null,
+                    ),
+                    onSubmitted: _newSearch,
                   ),
-                  onChanged: (_) {
-                    // Trigger rebuild to show suggestions if query changed
-                    setState(() {});
-                  },
-                  onSubmitted: _newSearch,
                 ),
               ),
             ],
@@ -290,55 +300,66 @@ class _SearchResultsPageState extends ConsumerState<SearchResultsPage> {
         child: Column(
           children: [
             Expanded(
-              child:
-                  (_searchController.text.isNotEmpty &&
-                      _searchController.text != _currentQuery)
-                  ? _buildSuggestions()
-                  : _isLoading
-                  ? const Center(child: CircularProgressIndicator())
-                  : _errorMessage != null
-                  ? ErrorView(
+              // 建议/结果切换只重建列表区，不碰 AppBar 与 MiniPlayer
+              child: ListenableBuilder(
+                listenable: _searchController,
+                builder: (context, _) {
+                  final showSuggestions =
+                      _searchController.text.isNotEmpty &&
+                      _searchController.text != _currentQuery;
+                  if (showSuggestions) return _buildSuggestions();
+                  if (_isLoading) {
+                    return const Center(child: CircularProgressIndicator());
+                  }
+                  if (_errorMessage != null) {
+                    return ErrorView(
                       message: _errorMessage!,
                       onRetry: _performInitialSearch,
-                    )
-                  : _results.isEmpty
-                  ? Center(child: Text(AppLocalizations.of(context).noResults))
-                  : RefreshIndicator(
-                      onRefresh: _performInitialSearch,
-                      child: ListView.builder(
-                        controller: _scrollController,
-                        scrollCacheExtent: ScrollCacheExtent.pixels(
-                          AppConstants.listCacheExtent,
-                        ),
-                        addAutomaticKeepAlives: false,
-                        itemCount:
-                            _results.length +
-                            ((_isLoadingMore || _loadMoreError) ? 1 : 0),
-                        itemBuilder: (context, index) {
-                          if (index == _results.length) {
-                            if (_loadMoreError) {
-                              return LoadMoreErrorFooter(onRetry: _loadMore);
-                            }
-                            return const Padding(
-                              padding: EdgeInsets.all(16),
-                              child: Center(
-                                child: CircularProgressIndicator(),
-                              ),
-                            );
-                          }
-                          final song = _results[index];
-                          return SongListTile(
-                            key: ValueKey(song.id),
-                            song: song,
-                            onTap: () {
-                              ref
-                                  .read(playerProvider.notifier)
-                                  .logQueue(_results, index);
-                            },
-                          );
-                        },
+                    );
+                  }
+                  if (_results.isEmpty) {
+                    return Center(
+                      child: Text(AppLocalizations.of(context).noResults),
+                    );
+                  }
+                  return RefreshIndicator(
+                    onRefresh: _performInitialSearch,
+                    child: ListView.builder(
+                      controller: _scrollController,
+                      scrollCacheExtent: ScrollCacheExtent.pixels(
+                        AppConstants.listCacheExtent,
                       ),
+                      addAutomaticKeepAlives: false,
+                      itemCount:
+                          _results.length +
+                          ((_isLoadingMore || _loadMoreError) ? 1 : 0),
+                      itemBuilder: (context, index) {
+                        if (index == _results.length) {
+                          if (_loadMoreError) {
+                            return LoadMoreErrorFooter(onRetry: _loadMore);
+                          }
+                          return const Padding(
+                            padding: EdgeInsets.all(16),
+                            child: Center(
+                              child: CircularProgressIndicator(),
+                            ),
+                          );
+                        }
+                        final song = _results[index];
+                        return SongListTile(
+                          key: ValueKey(song.id),
+                          song: song,
+                          onTap: () {
+                            ref
+                                .read(playerProvider.notifier)
+                                .logQueue(_results, index);
+                          },
+                        );
+                      },
                     ),
+                  );
+                },
+              ),
             ),
             const MiniPlayer(),
           ],
@@ -357,16 +378,9 @@ class _SearchResultsPageState extends ConsumerState<SearchResultsPage> {
     if (_suggestions.isEmpty && _searchController.text.isNotEmpty) {
       return Center(child: Text(AppLocalizations.of(context).noResults));
     }
-    return ListView.builder(
-      itemCount: _suggestions.length,
-      itemBuilder: (context, index) {
-        final suggestion = _suggestions[index];
-        return ListTile(
-          leading: Icon(Icons.search, color: Theme.of(context).hintColor),
-          title: Text(suggestion['name'] ?? ''),
-          onTap: () => _newSearch(suggestion['name'] ?? ''),
-        );
-      },
+    return SearchSuggestionsList(
+      suggestions: _suggestions,
+      onSelect: _newSearch,
     );
   }
 

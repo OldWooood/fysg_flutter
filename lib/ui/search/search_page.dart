@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -8,6 +9,7 @@ import '../../l10n/app_localizations.dart';
 import '../../providers/player_provider.dart';
 import '../../utils/constants.dart';
 import 'search_results_page.dart';
+import 'search_suggestions.dart';
 
 class SearchPage extends ConsumerStatefulWidget {
   const SearchPage({super.key});
@@ -19,9 +21,10 @@ class SearchPage extends ConsumerStatefulWidget {
 class _SearchPageState extends ConsumerState<SearchPage> {
   final TextEditingController _searchController = TextEditingController();
   Timer? _debounce;
+  CancelToken? _suggestCancel;
   List<Map<String, dynamic>> _suggestions = [];
   bool _isLoadingSuggestions = false;
-  // 搜索竞态 token：慢请求后到不覆盖快请求
+  // 搜索竞态 token：慢请求后到不覆盖快请求（另有 CancelToken 直接取消旧请求）
   int _suggestToken = 0;
 
   @override
@@ -47,12 +50,16 @@ class _SearchPageState extends ConsumerState<SearchPage> {
       final currentQuery = _searchController.text;
       if (currentQuery.isEmpty) return;
       final token = ++_suggestToken;
+      // 取消上一发未完成的建议请求，省流量
+      _suggestCancel?.cancel('new query');
+      final cancelToken = CancelToken();
+      _suggestCancel = cancelToken;
 
       if (mounted) setState(() => _isLoadingSuggestions = true);
       try {
         final result = await ref
             .read(fysgServiceProvider)
-            .getSearchSuggestions(currentQuery);
+            .getSearchSuggestions(currentQuery, cancelToken: cancelToken);
 
         if (!mounted || token != _suggestToken) return;
 
@@ -63,7 +70,9 @@ class _SearchPageState extends ConsumerState<SearchPage> {
               _isLoadingSuggestions = false;
             });
           },
-          err: (_) {
+          err: (error) {
+            // 被新输入取消不算失败，保持旧建议
+            if (error.code == 'cancelled') return;
             setState(() => _isLoadingSuggestions = false);
           },
         );
@@ -95,6 +104,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     _searchController.removeListener(_onSearchChanged);
     _searchController.dispose();
     _debounce?.cancel();
+    _suggestCancel?.cancel('dispose');
     super.dispose();
   }
 
@@ -118,35 +128,32 @@ class _SearchPageState extends ConsumerState<SearchPage> {
               Icon(Icons.search, color: Theme.of(context).hintColor),
               const SizedBox(width: 8),
               Expanded(
-                child: TextField(
-                  controller: _searchController,
-                  // 常驻 Tab 切过来自动弹键盘遮挡历史，改为手动聚焦
-                  autofocus: false,
-                  style: const TextStyle(fontSize: 16),
-                  textAlignVertical: TextAlignVertical.center,
-                  textInputAction: TextInputAction.search,
-                  decoration: InputDecoration(
-                    hintText: AppLocalizations.of(context).searchHint,
-                    border: InputBorder.none,
-                    isDense: true,
-                    contentPadding: const EdgeInsets.symmetric(vertical: 10),
-                    suffixIcon: _searchController.text.isNotEmpty
-                        ? IconButton(
-                            padding: EdgeInsets.zero,
-                            constraints: const BoxConstraints(),
-                            icon: const Icon(Icons.clear, size: 20),
-                            onPressed: () {
-                              _searchController.clear();
-                              setState(() {});
-                            },
-                          )
-                        : null,
+                // 输入框局部重建：之前 onChanged 整页 setState，每敲一字全量 rebuild
+                child: ListenableBuilder(
+                  listenable: _searchController,
+                  builder: (context, _) => TextField(
+                    controller: _searchController,
+                    // 常驻 Tab 切过来自动弹键盘遮挡历史，改为手动聚焦
+                    autofocus: false,
+                    style: const TextStyle(fontSize: 16),
+                    textAlignVertical: TextAlignVertical.center,
+                    textInputAction: TextInputAction.search,
+                    decoration: InputDecoration(
+                      hintText: AppLocalizations.of(context).searchHint,
+                      border: InputBorder.none,
+                      isDense: true,
+                      contentPadding: const EdgeInsets.symmetric(vertical: 10),
+                      suffixIcon: _searchController.text.isNotEmpty
+                          ? IconButton(
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(),
+                              icon: const Icon(Icons.clear, size: 20),
+                              onPressed: _searchController.clear,
+                            )
+                          : null,
+                    ),
+                    onSubmitted: _performSearch,
                   ),
-                  onChanged: (_) {
-                    // Trigger rebuild to switch to suggestions view
-                    setState(() {});
-                  },
-                  onSubmitted: _performSearch,
                 ),
               ),
             ],
@@ -165,9 +172,11 @@ class _SearchPageState extends ConsumerState<SearchPage> {
           ),
         ],
       ),
-      body: _searchController.text.isNotEmpty
-          ? _buildSuggestions()
-          : historyAsync.when(
+      body: ListenableBuilder(
+        listenable: _searchController,
+        builder: (context, _) {
+          if (_searchController.text.isNotEmpty) return _buildSuggestions();
+          return historyAsync.when(
               data: (history) {
                 if (history.isEmpty) {
                   return Center(
@@ -269,7 +278,9 @@ class _SearchPageState extends ConsumerState<SearchPage> {
               loading: () => const Center(child: CircularProgressIndicator()),
               error: (e, s) =>
                   Center(child: Text(AppLocalizations.of(context).loadFailed)),
-            ),
+            );
+        },
+      ),
     );
   }
 
@@ -283,52 +294,12 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     if (_suggestions.isEmpty && _searchController.text.isNotEmpty) {
       return Center(child: Text(AppLocalizations.of(context).noResults));
     }
-    return ListView.builder(
-      itemCount: _suggestions.length,
-      itemBuilder: (context, index) {
-        final suggestion = _suggestions[index];
-        final name = '${suggestion['name'] ?? ''}';
-        final artist = suggestion['artist'] is Map
-            ? '${(suggestion['artist'] as Map)['name'] ?? ''}'
-            : '${suggestion['artist'] ?? suggestion['author'] ?? ''}';
-        return ListTile(
-          leading: Icon(Icons.search, color: Theme.of(context).hintColor),
-          title: _highlightQuery(name, _searchController.text, context),
-          subtitle: artist.isEmpty ? null : Text(
-            artist,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-          onTap: () => _performSearch(name),
-        );
-      },
-    );
-  }
-
-  /// 搜索关键字高亮：之前只显示歌名无反馈
-  Widget _highlightQuery(String text, String query, BuildContext context) {
-    final q = query.trim().toLowerCase();
-    if (q.isEmpty || !text.toLowerCase().contains(q)) {
-      return Text(text, maxLines: 1, overflow: TextOverflow.ellipsis);
-    }
-    final lower = text.toLowerCase();
-    final start = lower.indexOf(q);
-    final end = start + q.length;
-    final primary = Theme.of(context).colorScheme.primary;
-    return RichText(
-      maxLines: 1,
-      overflow: TextOverflow.ellipsis,
-      text: TextSpan(
-        style: DefaultTextStyle.of(context).style,
-        children: [
-          TextSpan(text: text.substring(0, start)),
-          TextSpan(
-            text: text.substring(start, end),
-            style: TextStyle(color: primary, fontWeight: FontWeight.bold),
-          ),
-          TextSpan(text: text.substring(end)),
-        ],
-      ),
+    // 共用建议列表（含高亮），不再各页手写 ListTile
+    return SearchSuggestionsList(
+      suggestions: _suggestions,
+      highlight: true,
+      query: _searchController.text,
+      onSelect: _performSearch,
     );
   }
 }

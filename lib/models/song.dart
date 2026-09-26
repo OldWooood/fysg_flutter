@@ -9,7 +9,7 @@ class Song {
   final String? url; // URL to audio file
   final String? lyrics; // LRC content
 
-  Song({
+  const Song({
     required this.id,
     required this.name,
     this.artist,
@@ -129,6 +129,43 @@ class Song {
       'lyrics': lyrics,
     };
   }
+
+  Song copyWith({
+    int? id,
+    String? name,
+    String? Function()? artist,
+    String? Function()? album,
+    String? Function()? cover,
+    String? Function()? url,
+    String? Function()? lyrics,
+  }) {
+    return Song(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      artist: artist != null ? artist() : this.artist,
+      album: album != null ? album() : this.album,
+      cover: cover != null ? cover() : this.cover,
+      url: url != null ? url() : this.url,
+      lyrics: lyrics != null ? lyrics() : this.lyrics,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is Song &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          name == other.name &&
+          artist == other.artist &&
+          album == other.album &&
+          cover == other.cover &&
+          url == other.url &&
+          lyrics == other.lyrics;
+
+  @override
+  int get hashCode =>
+      Object.hash(id, name, artist, album, cover, url, lyrics);
 
   /// 轻量持久化快照：去掉 lyrics（LRC 可达几十KB），避免 SP 单 key 膨胀、
   /// 启动全量 decode 卡顿。歌词只放内存 + 按需请求详情。

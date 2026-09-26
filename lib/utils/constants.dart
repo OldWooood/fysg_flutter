@@ -36,6 +36,13 @@ class AppConstants {
   // 缓存时间
   static const Duration searchCacheTtl = Duration(seconds: 45);
   static const Duration recommendCacheTtl = Duration(minutes: 2);
+  static const Duration collectionCacheTtl = Duration(minutes: 2);
+
+  // 缓存容量上限（LRU，防长会话无界增长）
+  static const int searchCacheMaxEntries = 100;
+  static const int recommendCacheMaxEntries = 20;
+  static const int collectionCacheMaxEntries = 20;
+  static const int songDetailsCacheMaxEntries = 300;
 
   // SharedPreferences Keys
   static const String spDownloadedSongs = 'downloaded_songs';
@@ -56,6 +63,11 @@ class AppConstants {
   static const int maxSongLoadRetries = 2;
   static const int maxConsecutiveAutoSkips = 3;
   static const int prefetchMaxBytes = 256 * 1024 * 1024; // 256MB
+
+  // 队列上限：展示/持久化/后台展开统一截断，避免 500 首全量网络解析 + SP 膨胀
+  static const int maxQueueItems = 200;
+  // 后台展开时以当前为中心的优先窗口（首屏可更快就绪，其余随后补齐）
+  static const int queueExpandWindow = 40;
 
   // 持久化防抖：切歌时全量 json.encode 大队列很贵，合并写盘
   static const Duration queuePersistDebounce = Duration(milliseconds: 500);

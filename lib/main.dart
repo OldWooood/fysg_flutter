@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -11,10 +9,17 @@ import 'providers/shared_preferences_provider.dart';
 import 'providers/theme_provider.dart';
 import 'ui/main_screen.dart';
 import 'ui/theme/app_theme.dart';
+import 'utils/app_log.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await bootAndRun();
+}
 
+/// 启动并跑 App：先跑极轻 Splash，避免 AudioService/SP 串行阻塞黑屏；
+/// 后台并行初始化，任一失败都降级进入只读浏览模式。
+/// 重试走同一入口，不再递归 main()（避免重复 ensureInitialized 语义混乱）。
+Future<void> bootAndRun() async {
   // 先跑一个极轻的 Splash，避免 AudioService/SP 串行阻塞导致的黑屏。
   // 后台并行初始化，任一失败都允许降级进入只读浏览模式。
   runApp(const _BootSplash());
@@ -25,13 +30,13 @@ Future<void> main() async {
     prefs = await SharedPreferences.getInstance()
         .timeout(const Duration(seconds: 5));
   } catch (e) {
-    debugPrint('Boot prefs failed (degraded mode): $e');
+    AppLog.d('Boot prefs failed (degraded mode): $e');
     bootError = '$e';
   }
   try {
     await AppAudioService.init().timeout(const Duration(seconds: 8));
   } catch (e) {
-    debugPrint('Boot audio failed (degraded mode): $e');
+    AppLog.d('Boot audio failed (degraded mode): $e');
     bootError = [bootError, '$e'].whereType<String>().join('; ');
   }
 
@@ -98,7 +103,7 @@ class MyApp extends ConsumerWidget {
                   Text(bootError ?? 'init failed'),
                   const SizedBox(height: 12),
                   ElevatedButton(
-                    onPressed: () => main(),
+                    onPressed: () => bootAndRun(),
                     child: const Text('Retry'),
                   ),
                 ],

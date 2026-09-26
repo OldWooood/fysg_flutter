@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 
@@ -24,12 +26,51 @@ final downloadedSongsProvider = FutureProvider.autoDispose<List<Song>>(((
   return ref.watch(downloadServiceProvider).getDownloadedSongs();
 }));
 
+/// 简单信号量：替代之前的 `while + delay(200ms)` 忙等。
+class _Semaphore {
+  _Semaphore(this._slots);
+
+  int _slots;
+  final Queue<Completer<void>> _waiters = Queue<Completer<void>>();
+
+  Future<void> acquire() {
+    if (_slots > 0) {
+      _slots--;
+      return Future.value();
+    }
+    final waiter = Completer<void>();
+    _waiters.add(waiter);
+    return waiter.future;
+  }
+
+  void release() {
+    final waiter = _waiters.isEmpty ? null : _waiters.removeFirst();
+    if (waiter != null) {
+      waiter.complete();
+    } else {
+      _slots++;
+    }
+  }
+}
+
 class DownloadService {
   late final Dio _dio;
   final SharedPreferences _prefs;
   // 下载取消 + 并发控制：之前无 CancelToken、无上限，连续点多首打满带宽
   final Map<int, CancelToken> _activeTokens = {};
-  int _runningCount = 0;
+  final Map<int, CancelToken> _prefetchTokens = {};
+  late final _Semaphore _slots = _Semaphore(
+    AppConstants.maxConcurrentDownloads,
+  );
+
+  // 已下载 id 内存索引：命中则零 IO；未命中再落盘确认并回填。
+  // （之前每次播放都要 exists() 走一次 IO）
+  final Set<int> _downloadedIds = {};
+
+  // 目录 Future 缓存：之前每次 getLocalFile 都走一次 platform channel
+  Future<Directory>? _docDirFuture;
+  Future<Directory>? _tmpDirFuture;
+  Future<Directory>? _prefetchDirFuture;
 
   DownloadService(this._prefs) {
     _dio = Dio(
@@ -47,28 +88,27 @@ class DownloadService {
         token.cancel('dispose');
       } catch (_) {}
     }
+    for (final token in _prefetchTokens.values) {
+      try {
+        token.cancel('dispose');
+      } catch (_) {}
+    }
     _activeTokens.clear();
+    _prefetchTokens.clear();
     _dio.close(force: true);
   }
 
   void cancelDownload(int songId) {
     _activeTokens[songId]?.cancel('user cancel');
+    _prefetchTokens[songId]?.cancel('user cancel');
   }
 
-  Future<String> get _localPath async {
-    final directory = await getApplicationDocumentsDirectory();
-    return directory.path;
-  }
-
-  Future<String> get _prefetchPath async {
-    final directory = await getTemporaryDirectory();
-    return directory.path;
-  }
-
-  Future<Directory> _getPrefetchDir() async {
-    final path = await _prefetchPath;
-    return Directory('$path/prefetch');
-  }
+  Future<Directory> _docDir() =>
+      _docDirFuture ??= getApplicationDocumentsDirectory();
+  Future<Directory> _tmpDir() => _tmpDirFuture ??= getTemporaryDirectory();
+  Future<Directory> _prefetchDir() => _prefetchDirFuture ??= _tmpDir().then(
+    (tmp) => Directory('${tmp.path}/prefetch'),
+  );
 
   Future<File> _ensureParentExists(File file) async {
     if (!await file.parent.exists()) {
@@ -78,18 +118,18 @@ class DownloadService {
   }
 
   Future<File> getLocalFile(int songId) async {
-    final path = await _localPath;
-    return File('$path/songs/$songId.mp3');
+    final dir = await _docDir();
+    return File('${dir.path}/songs/$songId.mp3');
   }
 
   Future<File> getPrefetchFile(int songId) async {
-    final path = await _prefetchPath;
-    return File('$path/prefetch/$songId.mp3');
+    final dir = await _prefetchDir();
+    return File('${dir.path}/$songId.mp3');
   }
 
   Future<File> getPrefetchTempFile(int songId) async {
-    final path = await _prefetchPath;
-    return File('$path/prefetch/$songId.part');
+    final dir = await _prefetchDir();
+    return File('${dir.path}/$songId.part');
   }
 
   Future<bool> isPrefetched(int songId) async {
@@ -109,9 +149,11 @@ class DownloadService {
     await _removePrefetchIndex(songId);
   }
 
+  /// 预取：与其他下载共享信号量槽位，支持取消，避免无上限并发打满带宽。
   Future<void> prefetchSong(
     Song song, {
     void Function(int, int)? onProgress,
+    CancelToken? cancelToken,
   }) async {
     if (song.url == null) return;
 
@@ -126,8 +168,16 @@ class DownloadService {
       await tempFile.delete();
     }
 
+    final token = cancelToken ?? CancelToken();
+    _prefetchTokens[song.id] = token;
+    await _slots.acquire();
     try {
-      await _downloadToFile(song.url!, tempFile.path, onProgress: onProgress);
+      await _downloadToFile(
+        song.url!,
+        tempFile.path,
+        onProgress: onProgress,
+        cancelToken: token,
+      );
       if (await finalFile.exists()) {
         await finalFile.delete();
       }
@@ -141,13 +191,18 @@ class DownloadService {
         } catch (_) {}
       }
       rethrow;
+    } finally {
+      _slots.release();
+      if (_prefetchTokens[song.id] == token) {
+        _prefetchTokens.remove(song.id);
+      }
     }
   }
 
   Future<void> enforcePrefetchLimit({
     int maxBytes = AppConstants.prefetchMaxBytes,
   }) async {
-    final dir = await _getPrefetchDir();
+    final dir = await _prefetchDir();
     if (!await dir.exists()) return;
 
     final files = <File>[];
@@ -219,13 +274,10 @@ class DownloadService {
   }) async {
     if (song.url == null) return;
 
-    // 并发上限：超过则等待，避免多首并行打满带宽
-    while (_runningCount >= AppConstants.maxConcurrentDownloads) {
-      await Future.delayed(const Duration(milliseconds: 200));
-    }
+    // 信号量限流：超过上限排队等待，不再忙等轮询
     final token = cancelToken ?? CancelToken();
     _activeTokens[song.id] = token;
-    _runningCount++;
+    await _slots.acquire();
     try {
       final file = await getLocalFile(song.id);
       await _ensureParentExists(file);
@@ -248,12 +300,15 @@ class DownloadService {
         } catch (_) {}
       }
       await partFile.rename(file.path);
+      _downloadedIds.add(song.id);
 
       // Save to manifest（轻快照去歌词）
       await _saveToManifest(song);
     } finally {
-      _activeTokens.remove(song.id);
-      _runningCount--;
+      _slots.release();
+      if (_activeTokens[song.id] == token) {
+        _activeTokens.remove(song.id);
+      }
     }
   }
 
@@ -370,6 +425,7 @@ class DownloadService {
     for (final c in checks) {
       if (c.exists) {
         songs.add(c.song);
+        _downloadedIds.add(c.song.id);
         final raw = rawById[c.song.id];
         if (raw != null) validFiles.add(raw);
       }
@@ -382,16 +438,23 @@ class DownloadService {
     return songs;
   }
 
+  /// 内存优先的已下载判断：命中内存零 IO，未命中再落盘并回填。
   Future<bool> isDownloaded(int songId) async {
+    if (_downloadedIds.contains(songId)) return true;
     final file = await getLocalFile(songId);
-    return file.exists();
+    final exists = await file.exists();
+    if (exists) _downloadedIds.add(songId);
+    return exists;
   }
+
+  void markDownloaded(int songId) => _downloadedIds.add(songId);
 
   Future<void> deleteDownload(int songId) async {
     final file = await getLocalFile(songId);
     if (await file.exists()) {
       await file.delete();
     }
+    _downloadedIds.remove(songId);
 
     final List<String> downloaded =
         _prefs.getStringList(AppConstants.spDownloadedSongs) ?? [];

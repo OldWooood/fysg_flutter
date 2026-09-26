@@ -229,12 +229,14 @@ class _MiniProgressLine extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final positionSeconds = ref.watch(
-      playerProvider.select((s) => s.position.inSeconds),
+    // 合并订阅：之前 position/duration 各 watch 一次，每秒两次重建
+    final seconds = ref.watch(
+      playerProvider.select(
+        (s) => (position: s.position.inSeconds, duration: s.duration.inSeconds),
+      ),
     );
-    final durationSeconds = ref.watch(
-      playerProvider.select((s) => s.duration.inSeconds),
-    );
+    final positionSeconds = seconds.position;
+    final durationSeconds = seconds.duration;
     final progress = durationSeconds > 0
         ? (positionSeconds / durationSeconds).clamp(0.0, 1.0)
         : 0.0;

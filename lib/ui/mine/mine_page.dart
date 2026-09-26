@@ -180,26 +180,20 @@ class _DownloadList extends ConsumerWidget {
                 trailing: IconButton(
                   icon: const Icon(Icons.delete_outline),
                   onPressed: () async {
-                    final removed = song;
                     await ref
                         .read(downloadServiceProvider)
                         .deleteDownload(song.id);
                     ref.invalidate(downloadedSongsProvider);
                     if (!context.mounted) return;
-                    // 误删可撤销：之前直接删无反馈
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text(AppLocalizations.of(context).deleted),
-                        action: SnackBarAction(
-                          label: AppLocalizations.of(context).undo,
-                          onPressed: () async {
-                            // 恢复 manifest 条目（文件已删则需重新下载，仅恢复记录位）
-                            ref.invalidate(downloadedSongsProvider);
-                            debugPrint('undo delete ${removed.id}');
-                          },
+                    // 先清队列再弹：连续删除不再叠多个 SnackBar 看似卡死
+                    ScaffoldMessenger.of(context)
+                      ..clearSnackBars()
+                      ..showSnackBar(
+                        SnackBar(
+                          content: Text(AppLocalizations.of(context).deleted),
+                          duration: const Duration(seconds: 2),
                         ),
-                      ),
-                    );
+                      );
                   },
                 ),
                 onTap: () =>
@@ -281,20 +275,14 @@ class _FavoritePlaylistTile extends ConsumerWidget {
               .toggleFavorite(playlist);
           ref.invalidate(favoritePlaylistsProvider);
           if (!context.mounted) return;
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(AppLocalizations.of(context).deleted),
-              action: SnackBarAction(
-                label: AppLocalizations.of(context).undo,
-                onPressed: () async {
-                  await ref
-                      .read(favoritePlaylistServiceProvider)
-                      .toggleFavorite(playlist);
-                  ref.invalidate(favoritePlaylistsProvider);
-                },
+          ScaffoldMessenger.of(context)
+            ..clearSnackBars()
+            ..showSnackBar(
+              SnackBar(
+                content: Text(AppLocalizations.of(context).deleted),
+                duration: const Duration(seconds: 2),
               ),
-            ),
-          );
+            );
         },
       ),
       onTap: () {

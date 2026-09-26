@@ -54,7 +54,7 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
 
   Future<void> _fetchInitialSongs() async {
     final service = ref.read(fysgServiceProvider);
-    final result = await service.getCollectionSongs(
+    final result = await service.getCollectionSongsPaged(
       widget.playlist.type,
       widget.playlist.id,
       page: 0,
@@ -63,11 +63,11 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
     if (!mounted) return;
 
     result.when(
-      ok: (songs) {
+      ok: (paged) {
         setState(() {
-          _songs = songs;
+          _songs = paged.items;
           _isLoading = false;
-          _hasMore = songs.length >= AppConstants.defaultPageSize;
+          _hasMore = paged.hasMore;
         });
       },
       err: (error) {
@@ -88,7 +88,7 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
 
     final service = ref.read(fysgServiceProvider);
     final nextPage = _currentPage + 1;
-    final result = await service.getCollectionSongs(
+    final result = await service.getCollectionSongsPaged(
       widget.playlist.type,
       widget.playlist.id,
       page: nextPage,
@@ -97,12 +97,12 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
     if (!mounted) return;
 
     result.when(
-      ok: (songs) {
+      ok: (paged) {
         setState(() {
-          _songs.addAll(songs);
+          _songs.addAll(paged.items);
           _currentPage = nextPage;
           _isLoadingMore = false;
-          _hasMore = songs.length >= AppConstants.defaultPageSize;
+          _hasMore = paged.hasMore;
         });
       },
       err: (_) {

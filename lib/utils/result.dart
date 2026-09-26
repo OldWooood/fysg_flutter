@@ -95,10 +95,19 @@ class Err<T, E> extends Result<T, E> {
 sealed class AppError {
   const AppError();
 
-  factory AppError.network([String? message]) = NetworkError;
+  factory AppError.network([String? message, String code = 'network']) =>
+      NetworkError(message, code);
   factory AppError.cache([String? message]) = CacheError;
   factory AppError.notFound(String resource) = NotFoundError;
   factory AppError.unknown(Object error) = UnknownError;
+
+  /// 结构化错误码：UI 层据此做国际化映射，避免网络层硬编码中文解析
+  String get code => switch (this) {
+    NetworkError(:final errorCode) => errorCode,
+    CacheError() => 'cache',
+    NotFoundError() => 'notFound',
+    UnknownError() => 'unknown',
+  };
 
   String get message => switch (this) {
     NetworkError(:final msg) => msg ?? '网络连接失败',
@@ -106,28 +115,22 @@ sealed class AppError {
     NotFoundError(:final resource) => '$resource 不存在',
     UnknownError(:final error) => '未知错误: $error',
   };
-
-  /// 错误码：UI 层据此做国际化映射，避免网络层硬编码中文
-  String get code => switch (this) {
-    NetworkError(:final msg) =>
-      msg != null && msg.contains('过于频繁')
-          ? 'rateLimited'
-          : msg != null && msg.contains('超时')
-          ? 'timeout'
-          : msg != null && msg.contains('拒绝')
-          ? 'forbidden'
-          : msg != null && msg.contains('服务器')
-          ? 'server'
-          : 'network',
-    CacheError() => 'cache',
-    NotFoundError() => 'notFound',
-    UnknownError() => 'unknown',
-  };
 }
 
 class NetworkError extends AppError {
   final String? msg;
-  const NetworkError([this.msg]);
+  final String errorCode;
+  const NetworkError([this.msg, this.errorCode = 'network']);
+
+  /// 便捷构造：语义明确的常用码，避免各处手写字符串
+  factory NetworkError.timeout([String? msg]) =>
+      NetworkError(msg ?? '请求超时，请检查网络后重试', 'timeout');
+  factory NetworkError.rateLimited([String? msg]) =>
+      NetworkError(msg ?? '请求过于频繁，请稍后重试', 'rateLimited');
+  factory NetworkError.forbidden(int status) =>
+      NetworkError('访问被拒绝($status)，请稍后重试', 'forbidden');
+  factory NetworkError.server(int status) =>
+      NetworkError('服务器错误: $status', 'server');
 }
 
 class CacheError extends AppError {

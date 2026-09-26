@@ -1,28 +1,40 @@
 import 'dart:async';
 
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:palette_generator/palette_generator.dart';
 import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
-import '../../api/image_cache_service.dart';
 import '../../l10n/app_localizations.dart';
 import '../../models/song.dart';
 import '../../providers/player_provider.dart';
 import '../../utils/constants.dart';
+import '../../utils/cover_palette.dart';
 import '../../utils/lyrics.dart';
 import '../../utils/toast_utils.dart';
 import '../common/song_cover.dart';
 import 'playlist_bottom_sheet.dart';
 
-/// 歌词解析缓存
-/// 使用 Provider 缓存解析结果，避免每次 rebuild 都重新解析
-final _lyricsCacheProvider = Provider.family<List<LyricLine>, String?>(
-  (ref, lyrics) => parseLyrics(lyrics),
+/// 歌词解析缓存：按 songId 缓存，避免之前以整段 LRC 字符串做 family key
+///（大 key 复制 + 内存翻倍），解析结果随详情合并自动刷新。
+final _lyricsCacheProvider = Provider.family<List<LyricLine>, int>(
+  (ref, songId) {
+    final current = ref.watch(playerProvider.select((s) => s.currentSong));
+    if (current != null && current.id == songId) {
+      return parseLyrics(current.lyrics);
+    }
+    final queue = ref.watch(playerProvider.select((s) => s.queue));
+    for (final song in queue) {
+      if (song.id == songId) return parseLyrics(song.lyrics);
+    }
+    return const <LyricLine>[];
+  },
 );
+
+/// 系统字体缩放因子（钳制 0.8~1.6，防超大字体撑爆布局）。
+double _textScaleFactor(BuildContext context) =>
+    MediaQuery.textScalerOf(context).scale(1.0).clamp(0.8, 1.6);
 
 class PlayerPage extends ConsumerStatefulWidget {
   const PlayerPage({super.key});
@@ -66,7 +78,10 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
   @override
   Widget build(BuildContext context) {
     final song = ref.watch(playerProvider.select((s) => s.currentSong));
-    final lyrics = ref.watch(_lyricsCacheProvider(song?.lyrics));
+    final songId = song?.id;
+    final lyrics = songId == null
+        ? const <LyricLine>[]
+        : ref.watch(_lyricsCacheProvider(songId));
     // 息屏跟随播放状态：之前进页面 enable、出页面 disable，
     // 后台仍在播也会被关掉。现只在播放时保持常亮。
     ref.listen(playerProvider.select((s) => s.isPlaying), (_, isPlaying) {
@@ -192,11 +207,7 @@ class _CoverView extends StatelessWidget {
                     song.name,
                     style: Theme.of(context).textTheme.titleLarge?.copyWith(
                       color: Theme.of(context).colorScheme.onSurface,
-                      fontSize:
-                          titleFontSize *
-                          MediaQuery.textScalerOf(
-                            context,
-                          ).scale(1.0).clamp(0.8, 1.4),
+                      fontSize: titleFontSize * _textScaleFactor(context),
                       fontWeight: FontWeight.bold,
                     ),
                     textAlign: TextAlign.center,
@@ -282,26 +293,12 @@ class _PlayerBackgroundState extends State<_PlayerBackground> {
       return;
     }
     try {
-      // 用小缩略图取色 + 切歌后延迟到空闲帧，避免封面切换瞬间卡 1~3 帧；
+      // 切歌后延迟到空闲帧 + isolate 内解码统计，避免封面切换瞬间卡帧；
       // token 防止快速切歌时旧任务覆盖新封面颜色。
       await Future.delayed(const Duration(milliseconds: 300));
       if (token != _extractToken || !mounted) return;
-      final palette = await PaletteGenerator.fromImageProvider(
-        ResizeImage(
-          CachedNetworkImageProvider(
-            url,
-            headers: ImageCacheService.headers,
-            cacheManager: ImageCacheService.cacheManager,
-          ),
-          width: 100,
-        ),
-        maximumColorCount: 8,
-      );
+      final color = await extractCoverColor(url);
       if (token != _extractToken || !mounted) return;
-      final color =
-          palette.vibrantColor?.color ??
-          palette.mutedColor?.color ??
-          palette.dominantColor?.color;
       if (color != null) {
         _putPalette(url, color);
         setState(() => _dominantColor = color);
@@ -441,9 +438,7 @@ class _LyricsViewState extends ConsumerState<_LyricsView>
     );
     final position = Duration(seconds: positionSeconds);
     // 跟随系统字体缩放：之前固定 24/18，大字体用户看不清
-    final textScaler = MediaQuery.textScalerOf(
-      context,
-    ).scale(1.0).clamp(0.8, 1.6);
+    final textScaleFactor = _textScaleFactor(context).clamp(0.8, 1.6);
     final onSurface = Theme.of(context).colorScheme.onSurface;
     final onSurfaceDim = onSurface.withValues(alpha: 0.6);
 
@@ -506,7 +501,7 @@ class _LyricsViewState extends ConsumerState<_LyricsView>
                   widget.lyrics[index].text,
                   style: TextStyle(
                     color: isCurrent ? onSurface : onSurfaceDim,
-                    fontSize: (isCurrent ? 24 : 18) * textScaler,
+                    fontSize: (isCurrent ? 24 : 18) * textScaleFactor,
                     fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal,
                   ),
                   textAlign: TextAlign.center,
@@ -870,14 +865,16 @@ class _SeekbarState extends ConsumerState<_Seekbar> {
 
   @override
   Widget build(BuildContext context) {
-    // 秒级订阅：之前同时 watch position+duration，just_audio ~100ms 推一次导致
-    // 全量 rebuild；取秒后降为 1次/s，拖动期间用 _dragValue 本地值不被打断。
-    final durationSeconds = ref.watch(
-      playerProvider.select((s) => s.duration.inSeconds),
+    // 秒级订阅 + 合并：之前 position/duration 各 watch 一次，
+    // just_audio ~100ms 推一次导致全量 rebuild；取秒后降为 1次/s，
+    // 拖动期间用 _dragValue 本地值不被打断。
+    final progress = ref.watch(
+      playerProvider.select(
+        (s) => (position: s.position.inSeconds, duration: s.duration.inSeconds),
+      ),
     );
-    final positionSeconds = ref.watch(
-      playerProvider.select((s) => s.position.inSeconds),
-    );
+    final durationSeconds = progress.duration;
+    final positionSeconds = progress.position;
     final duration = Duration(seconds: durationSeconds);
     final position = Duration(seconds: positionSeconds);
 

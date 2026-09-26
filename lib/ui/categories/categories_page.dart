@@ -7,6 +7,7 @@ import '../../api/image_cache_service.dart';
 import '../../l10n/app_localizations.dart';
 import '../../models/playlist.dart';
 import '../../providers/player_provider.dart';
+import '../../utils/app_log.dart';
 import '../../utils/constants.dart';
 import '../common/error_view.dart';
 import 'playlist_detail_page.dart';
@@ -91,15 +92,16 @@ class _CategoryGridState extends ConsumerState<_CategoryGrid> {
   Future<void> _fetchByType(int page) async {
     final service = ref.read(fysgServiceProvider);
     final result = switch (widget.type) {
-      'album' => await service.getAlbums(page: page),
-      'playlist' => await service.getPlaylists(page: page),
+      'album' => await service.getAlbumsPaged(page: page),
+      'playlist' => await service.getPlaylistsPaged(page: page),
       _ => throw UnsupportedError('Unknown type: ${widget.type}'),
     };
 
     if (!mounted) return;
 
     result.when(
-      ok: (items) {
+      ok: (paged) {
+        final items = paged.items;
         setState(() {
           if (page == 0) {
             _items = items;
@@ -111,7 +113,7 @@ class _CategoryGridState extends ConsumerState<_CategoryGrid> {
             _isLoadingMore = false;
           }
           _loadMoreError = false;
-          _hasMore = items.length >= AppConstants.defaultPageSize;
+          _hasMore = paged.hasMore;
         });
       },
       err: (error) {
@@ -126,7 +128,7 @@ class _CategoryGridState extends ConsumerState<_CategoryGrid> {
           }
         });
         if (page == 0) {
-          debugPrint('Error fetching ${widget.type}: $error');
+          AppLog.d('Error fetching ${widget.type}: $error');
         }
       },
     );
