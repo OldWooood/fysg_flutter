@@ -1,5 +1,6 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 class AppTheme {
   static const _seedColor = Color(0xFF3949AB);
@@ -46,7 +47,8 @@ class AppTheme {
         bodyMedium: TextStyle(fontSize: 14, color: onSurfaceMedium),
       ),
 
-      // App Bar
+      // App Bar（含状态栏图标亮度：浅色深图标、深色浅图标，
+      // 否则白底白图标看不见；无 AppBar 的页由 MainScreen 的 AnnotatedRegion 兜底）
       appBarTheme: AppBarTheme(
         backgroundColor: brightness == Brightness.light
             ? Colors.white
@@ -58,6 +60,13 @@ class AppTheme {
           fontWeight: FontWeight.bold,
           color: colorScheme.onSurface,
         ),
+        systemOverlayStyle: brightness == Brightness.light
+            ? SystemUiOverlayStyle.dark.copyWith(
+                statusBarColor: Colors.transparent,
+              )
+            : SystemUiOverlayStyle.light.copyWith(
+                statusBarColor: Colors.transparent,
+              ),
       ),
       pageTransitionsTheme: const PageTransitionsTheme(
         builders: {

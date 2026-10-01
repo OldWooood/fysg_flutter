@@ -527,7 +527,6 @@ class _ControlsSection extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final isPlaying = ref.watch(playerProvider.select((s) => s.isPlaying));
     final mode = ref.watch(playerProvider.select((s) => s.mode));
-    final speed = ref.watch(playerProvider.select((s) => s.speed));
     final song = ref.watch(playerProvider.select((s) => s.currentSong));
     final onSurface = Theme.of(context).colorScheme.onSurface;
     final onSurfaceDim = onSurface.withValues(alpha: 0.6);
@@ -553,7 +552,7 @@ class _ControlsSection extends ConsumerWidget {
         _Seekbar(),
         _buildTransportControls(context, ref, isPlaying),
         const SizedBox(height: 20),
-        _buildOptionButtons(context, ref, song, mode, speed),
+        _buildOptionButtons(context, ref, song, mode),
       ],
     );
   }
@@ -651,94 +650,13 @@ class _ControlsSection extends ConsumerWidget {
     }
   }
 
-  static const _speedOptions = [0.75, 1.0, 1.25, 1.5, 2.0];
-
-  Future<void> _pickSpeed(
-    BuildContext context,
-    WidgetRef ref,
-    double current,
-  ) async {
-    // 之前循环 1->1.25->1.5->0.75，第三次突然变慢；改弹窗单选
-    final picked = await showDialog<double>(
-      context: context,
-      builder: (context) => SimpleDialog(
-        title: Text(AppLocalizations.of(context).speed),
-        children: _speedOptions
-            .map(
-              (s) => ListTile(
-                title: Text('${_formatSpeed(s)}x'),
-                trailing: s == current
-                    ? Icon(
-                        Icons.check,
-                        color: Theme.of(context).colorScheme.primary,
-                      )
-                    : null,
-                onTap: () => Navigator.of(context).pop(s),
-              ),
-            )
-            .toList(),
-      ),
-    );
-    if (picked != null) {
-      ref.read(playerProvider.notifier).setSpeed(picked);
-    }
-  }
-
-  Future<void> _pickSleepTimer(BuildContext context, WidgetRef ref) async {
-    final l10n = AppLocalizations.of(context);
-    final current = ref.read(sleepTimerProvider);
-    Duration? picked;
-    var chose = false;
-    await showDialog<void>(
-      context: context,
-      builder: (context) {
-        Widget item(Duration? value, String label) {
-          final selected = value == current;
-          return ListTile(
-            title: Text(label),
-            trailing: selected
-                ? Icon(
-                    Icons.check,
-                    color: Theme.of(context).colorScheme.primary,
-                  )
-                : null,
-            onTap: () {
-              picked = value;
-              chose = true;
-              Navigator.of(context).pop();
-            },
-          );
-        }
-
-        return SimpleDialog(
-          title: Text(l10n.sleepTimer),
-          children: [
-            item(null, l10n.sleepOff),
-            item(const Duration(minutes: 15), '15 min'),
-            item(const Duration(minutes: 30), '30 min'),
-            item(const Duration(minutes: 60), '60 min'),
-          ],
-        );
-      },
-    );
-    if (!context.mounted || !chose) return;
-    {
-      ref.read(playerProvider.notifier).setSleepTimer(picked);
-      if (picked != null && context.mounted) {
-        ToastUtils.showToast(context, l10n.sleepTimer);
-      }
-    }
-  }
-
   Widget _buildOptionButtons(
     BuildContext context,
     WidgetRef ref,
     Song? song,
     PlaybackMode mode,
-    double speed,
   ) {
     final l10n = AppLocalizations.of(context);
-    final sleepTimer = ref.watch(sleepTimerProvider);
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12),
       child: Row(
@@ -749,22 +667,6 @@ class _ControlsSection extends ConsumerWidget {
             icon: _getModeIcon(mode),
             label: _getModeLabel(mode, context),
             onPressed: () => ref.read(playerProvider.notifier).toggleMode(),
-          ),
-          _buildOptionButton(
-            context,
-            icon: Icons.speed,
-            label: '${l10n.speed} ${_formatSpeed(speed)}x',
-            onPressed: () => _pickSpeed(context, ref, speed),
-          ),
-          _buildOptionButton(
-            context,
-            icon: sleepTimer != null
-                ? Icons.bedtime
-                : Icons.bedtime_outlined,
-            label: sleepTimer != null
-                ? '${sleepTimer.inMinutes}min'
-                : l10n.sleepTimer,
-            onPressed: () => _pickSleepTimer(context, ref),
           ),
           _buildOptionButton(
             context,
@@ -795,9 +697,6 @@ class _ControlsSection extends ConsumerWidget {
       ),
     );
   }
-
-  static String _formatSpeed(double speed) =>
-      speed == speed.roundToDouble() ? speed.toStringAsFixed(0) : '$speed';
 
   IconData _getModeIcon(PlaybackMode mode) {
     return switch (mode) {

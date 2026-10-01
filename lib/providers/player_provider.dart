@@ -49,17 +49,6 @@ final playerQueueStateProvider =
       );
     });
 
-/// 睡眠定时：剩余时长，null 表示关闭。UI 层设置，Notifier 层执行 pause。
-final sleepTimerProvider =
-    NotifierProvider<SleepTimerNotifier, Duration?>(SleepTimerNotifier.new);
-
-class SleepTimerNotifier extends Notifier<Duration?> {
-  @override
-  Duration? build() => null;
-
-  void set(Duration? value) => state = value;
-}
-
 // Riverpod 3：StateNotifierProvider/StateNotifier 已移除，改用 NotifierProvider。
 // 依赖改在 build() 内用 ref.watch 获取（实例在 build 重跑时保留，仅 state 会重置；
 // 下方 service 均为稳定单例，不会触发重跑）。
@@ -133,7 +122,6 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
   bool? _lastSyncPlaying;
   ProcessingState? _lastSyncProcessing;
   DateTime _lastPositionStateUpdate = DateTime.fromMillisecondsSinceEpoch(0);
-  Timer? _sleepTimer;
   int _consecutiveAutoSkips = 0;
   late final QueuePersistence _persistence;
   late final QueueExpander _expander;
@@ -174,7 +162,6 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
       // 防止静态单例持有已释放对象。
       ref.onDispose(() {
         _isDisposed = true;
-        _sleepTimer?.cancel();
         _recentService.dispose();
         for (final subscription in _subscriptions) {
           unawaited(subscription.cancel());
@@ -449,18 +436,6 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
   void cancelCurrentDownload() {
     final song = state.currentSong;
     if (song != null) _downloadService.cancelDownload(song.id);
-  }
-
-  /// 睡眠定时：到时自动暂停。切歌/手动暂停不取消，到时即停。
-  void setSleepTimer(Duration? duration) {
-    _sleepTimer?.cancel();
-    _sleepTimer = null;
-    ref.read(sleepTimerProvider.notifier).set(duration);
-    if (duration == null) return;
-    _sleepTimer = Timer(duration, () {
-      _audioPlayer.pause();
-      if (_mounted) ref.read(sleepTimerProvider.notifier).set(null);
-    });
   }
 
   Future<void> logQueue(List<Song> songs, int index) async {
@@ -851,10 +826,6 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
 
   @override
   void onStop() => stopPlayback();
-
-  Future<void> setSpeed(double speed) async {
-    await _audioPlayer.setSpeed(speed);
-  }
 
   void togglePlayPause() {
     if (_audioPlayer.playing) {

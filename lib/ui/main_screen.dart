@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/player_provider.dart';
 import 'home/home_page.dart';
@@ -52,18 +53,31 @@ class _MainScreenState extends ConsumerState<MainScreen>
 
   @override
   Widget build(BuildContext context) {
+    // 无 AppBar 的 tab（首页）没有样式来源，在此按主题指定状态栏图标亮度；
+    // 有 AppBar 的页走 AppBarTheme.systemOverlayStyle
+    final overlayStyle =
+        Theme.of(context).brightness == Brightness.dark
+        ? SystemUiOverlayStyle.light.copyWith(
+            statusBarColor: Colors.transparent,
+          )
+        : SystemUiOverlayStyle.dark.copyWith(
+            statusBarColor: Colors.transparent,
+          );
     return Scaffold(
-      body: SafeArea(
-        top: true,
-        bottom: false,
-        child: Column(
-          children: [
-            Expanded(
-              child: IndexedStack(index: _currentIndex, children: _pages),
-            ),
-            // 全局唯一的 MiniPlayer，避免四个 Tab 各持一份
-            const MiniPlayer(),
-          ],
+      body: AnnotatedRegion<SystemUiOverlayStyle>(
+        value: overlayStyle,
+        child: SafeArea(
+          top: true,
+          bottom: false,
+          child: Column(
+            children: [
+              Expanded(
+                child: IndexedStack(index: _currentIndex, children: _pages),
+              ),
+              // 全局唯一的 MiniPlayer，避免四个 Tab 各持一份
+              const MiniPlayer(),
+            ],
+          ),
         ),
       ),
       bottomNavigationBar: SafeArea(
