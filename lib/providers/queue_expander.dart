@@ -1,5 +1,6 @@
 import 'package:just_audio/just_audio.dart';
 
+import '../api/asset_config.dart';
 import '../api/download_service.dart';
 import '../api/fysg_service.dart';
 import '../models/song.dart';
@@ -52,8 +53,34 @@ class QueueExpander {
     );
   }
 
-  Future<PlayableEntry?> buildEntry(Song song) async {
-    final resolvedSong = song;
+  Future<PlayableEntry?> buildEntry(Song song, {bool refreshUrl = false}) async {
+    var resolvedSong = song;
+    // 冷启动恢复/首个音源失败时刷新播放地址：优先走网页端同款 songUrl 接口
+    //（返回已编码的相对路径 + 当前 audioBase 拼接），失败再回退详情接口，
+    // 还失败则用缓存 url 再试，避免直接用过期地址导致整队 setAudioSources 失败。
+    if (refreshUrl && resolvedSong.id != 0) {
+      final playUrls = await _service.getSongPlayUrls([resolvedSong.id]);
+      final relative = playUrls.when(ok: (m) => m[resolvedSong.id], err: (_) => null);
+      if (relative != null && relative.isNotEmpty) {
+        final absolute = relative.startsWith('http')
+            ? relative
+            : '${AssetConfig.audioBase}$relative';
+        resolvedSong = resolvedSong.copyWith(url: () => absolute);
+      } else {
+        final result = await _service.getSongDetails(resolvedSong.id);
+        result.when(
+          ok: (details) {
+            _songDetailsCache[resolvedSong.id] = details;
+            resolvedSong = _resolver.mergeSong(resolvedSong, details);
+          },
+          err: (error) {
+            AppLog.d(
+              'Refresh url failed for ${resolvedSong.id}, use cached: ${error.message}',
+            );
+          },
+        );
+      }
+    }
     try {
       final source = await createAudioSource(resolvedSong);
       return (song: resolvedSong, source: source);

@@ -22,6 +22,7 @@ class Song {
   factory Song.fromJson(
     Map<String, dynamic> json, {
     String assetBase = AppConstants.assetBaseUrl,
+    String? audioBase,
   }) {
     // FYSG API structure adaptation (defensive: dirty data must not crash)
     String? artistName;
@@ -73,7 +74,10 @@ class Song {
       // relative to the asset base. Images do not.
       if (!audioUrl.startsWith('/song_high') &&
           !audioUrl.startsWith('song_high')) {
-        audioUrl = '$assetBase/song_high$audioUrl';
+        // audioBase 已含 /song_high（如服务端下发的 audio-domain），
+        // 避免重复拼接。
+        final prefix = audioBase ?? '$assetBase/song_high';
+        audioUrl = '$prefix$audioUrl';
       } else {
         audioUrl = '$assetBase$audioUrl';
       }

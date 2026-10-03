@@ -5,6 +5,7 @@ import '../models/song.dart';
 import '../utils/app_log.dart';
 import '../utils/constants.dart';
 import '../utils/result.dart';
+import 'asset_config.dart';
 
 /// 分页结果：携带 total 后 UI 可用精确 hasMore，不再靠 `length >= size` 猜。
 /// 实测 fysg.org 的 /songs、/playlists 均支持 page/size 并返回 data.count。
@@ -188,10 +189,64 @@ class FysgService {
         .map(
           (item) => Song.fromJson(
             Map<String, dynamic>.from(item),
-            assetBase: AppConstants.assetBaseUrl,
+            assetBase: AssetConfig.imageBase,
+            audioBase: AssetConfig.audioBase,
           ),
         )
         .toList();
+  }
+
+  /// 拉取服务端资源域名（image-domain/audio-domain），CDN 迁移时自动跟随。
+  /// 失败不抛异常：调用方保留旧域名继续工作。
+  Future<Map<String, String>> fetchAssetDomains() async {
+    try {
+      final response = await _get('/api/app/config');
+      final jsonResponse = _responseMap(response);
+      final data = jsonResponse?['data'];
+      if (data is Map && data['settings'] is List) {
+        final domains = AssetConfig.parseDomains(data['settings'] as List);
+        if (domains.isNotEmpty) {
+          AssetConfig.applyDomains(domains);
+        }
+        return domains;
+      }
+    } catch (e) {
+      AppLog.d('fetchAssetDomains failed: $e');
+    }
+    return const {};
+  }
+
+  /// 网页端同款：播放前按 id 批量换取真实播放地址（type=songUrl），
+  /// 返回 id -> 相对路径（如 `/%E4%BD%A0...mp3`，已做 URL 编码）。
+  /// 列表接口的 url 字段只做展示兜底，不直接用于播放。
+  Future<Result<Map<int, String>, AppError>> getSongPlayUrls(
+    List<int> ids,
+  ) async {
+    final valid = ids.where((id) => id != 0).toSet().toList();
+    if (valid.isEmpty) return Result.ok(const {});
+    try {
+      final response = await _get(
+        '/api/app/resourcesByIds',
+        query: {'ids': valid.join(','), 'type': 'songUrl'},
+      );
+      final jsonResponse = _responseMap(response);
+      final data = jsonResponse?['data'];
+      if (data is! List) return Result.ok(const {});
+      final urls = <int, String>{};
+      for (final item in data) {
+        if (item is! Map) continue;
+        final id = int.tryParse('${item['id'] ?? ''}');
+        final url = item['url'];
+        if (id != null && id != 0 && url is String && url.isNotEmpty) {
+          urls[id] = url;
+        }
+      }
+      return Result.ok(urls);
+    } on AppError catch (e) {
+      return Result.err(e);
+    } catch (e) {
+      return Result.err(AppError.unknown(e));
+    }
   }
 
   /// 获取搜索建议
@@ -545,7 +600,8 @@ class FysgService {
 
       return Song.fromJson(
         Map<String, dynamic>.from(songData),
-        assetBase: AppConstants.assetBaseUrl,
+        assetBase: AssetConfig.imageBase,
+        audioBase: AssetConfig.audioBase,
       );
     } on AppError {
       rethrow;

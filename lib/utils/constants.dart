@@ -12,7 +12,10 @@ class AppConstants {
   );
   static const String assetBaseUrl = String.fromEnvironment(
     'FYSG_ASSET_BASE',
-    defaultValue: 'https://sg-file.nanqiao.xyz',
+    // 注意：资源 CDN 曾由服务端迁移（nanqiao.xyz 已下线），
+    // 不要写死旧域名；运行时以 /api/app/config 下发的
+    // image-domain/audio-domain 为准（见 AssetConfig），此处仅作兜底。
+    defaultValue: 'https://sg-file.gooddaycoco.com',
   );
   static const String apiVersion = '5.1.7';
   static const String apiAppName = 'fuyinshige';
@@ -47,6 +50,10 @@ class AppConstants {
   // SharedPreferences Keys
   static const String spDownloadedSongs = 'downloaded_songs';
   static const String spPrefetchIndexKey = 'prefetch_song_ids';
+  // 服务端下发的资源域名缓存（config 接口的 image-domain/audio-domain），
+  // CDN 迁移后冷启动直接用上次的好域名，不等网络。
+  static const String spImageDomainKey = 'asset_image_domain';
+  static const String spAudioDomainKey = 'asset_audio_domain';
   static const String spQueueCacheKey = 'player_queue_cache';
   static const String spQueueIndexKey = 'player_queue_index';
   static const String spQueueSongIdKey = 'player_queue_song_id';

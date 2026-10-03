@@ -497,20 +497,62 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
     _syncBackgroundNowPlaying(displayQueue[safeDisplayIndex]);
     _suppressIndexSync = true;
 
-    await _audioPlayer.setAudioSources(
-      [firstPlayable.source],
-      initialIndex: 0,
-      preload: true,
-    );
+    try {
+      await _audioPlayer.setAudioSources(
+        [firstPlayable.source],
+        initialIndex: 0,
+        preload: true,
+      );
+    } catch (e) {
+      AppLog.d('setAudioSources(first) failed: $e, retry with fresh url');
+      // 首个音源加载失败（过期 url 等）：刷新详情拿新地址重试一次，
+      // 重试仍失败则复位标记并走失败处理，避免 _suppressIndexSync 永久为 true。
+      final refreshed = await _expander.buildEntry(
+        songsToPlay[safeDisplayIndex],
+        refreshUrl: true,
+      );
+      if (!_mounted || buildToken != _queueBuildToken) return;
+      if (refreshed == null) {
+        _suppressIndexSync = false;
+        _handleSongLoadFailure('first_source_failed');
+        return;
+      }
+      firstPlayable = refreshed;
+      try {
+        await _audioPlayer.setAudioSources(
+          [firstPlayable.source],
+          initialIndex: 0,
+          preload: true,
+        );
+        state = state.copyWith(currentSong: firstPlayable.song);
+      } catch (e2) {
+        AppLog.d('setAudioSources(first) retry failed: $e2');
+        if (buildToken == _queueBuildToken) _suppressIndexSync = false;
+        _handleSongLoadFailure('first_source_retry_failed');
+        return;
+      }
+    }
 
     if (!_mounted || buildToken != _queueBuildToken) return;
-    await _audioPlayer.seek(Duration.zero, index: 0);
-    _audioPlayer.play();
+    try {
+      await _audioPlayer.seek(Duration.zero, index: 0);
+    } catch (e) {
+      AppLog.d('seek after setAudioSources failed: $e');
+    }
+    // play() 的 Future 不等待：失败走 playerStateStream/错误回调，
+    // 此处 catch 仅防同步抛错导致后台展开被跳过。
+    try {
+      _audioPlayer.play();
+    } catch (e) {
+      AppLog.d('play() failed: $e');
+    }
 
-    _expandQueueInBackground(
-      songs: songsToPlay,
-      currentSongSnapshot: firstPlayable.song,
-      buildToken: buildToken,
+    unawaited(
+      _expandQueueInBackground(
+        songs: songsToPlay,
+        currentSongSnapshot: firstPlayable.song,
+        buildToken: buildToken,
+      ),
     );
   }
 
@@ -531,46 +573,70 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
     if (_queueStateRestored) return;
     _queueStateRestored = true;
 
-    // 文件级队列快照（自动回退并迁移旧 SP 数据）
-    final cachedSongs = await _persistence.loadQueueCache();
-    if (cachedSongs.isEmpty) return;
+    try {
+      // 文件级队列快照（自动回退并迁移旧 SP 数据）
+      final cachedSongs = await _persistence.loadQueueCache();
+      if (cachedSongs.isEmpty) return;
 
-    // 使用通过 Riverpod 注入的 SharedPreferences 实例（仅读轻量 index/position）
-    final prefs = ref.read(sharedPreferencesProvider);
+      // 使用通过 Riverpod 注入的 SharedPreferences 实例（仅读轻量 index/position）
+      final prefs = ref.read(sharedPreferencesProvider);
 
-    final savedIndex = prefs.getInt(AppConstants.spQueueIndexKey) ?? 0;
-    final savedId = prefs.getInt(AppConstants.spQueueSongIdKey);
-    final savedPositionMs = prefs.getInt(AppConstants.spQueuePositionKey) ?? 0;
-    var index = savedIndex.clamp(0, cachedSongs.length - 1);
-    if (savedId != null) {
-      final byId = cachedSongs.indexWhere((s) => s.id == savedId);
-      if (byId != -1) {
-        index = byId;
+      final savedIndex = prefs.getInt(AppConstants.spQueueIndexKey) ?? 0;
+      final savedId = prefs.getInt(AppConstants.spQueueSongIdKey);
+      final savedPositionMs =
+          prefs.getInt(AppConstants.spQueuePositionKey) ?? 0;
+      var index = savedIndex.clamp(0, cachedSongs.length - 1);
+      if (savedId != null) {
+        final byId = cachedSongs.indexWhere((s) => s.id == savedId);
+        if (byId != -1) {
+          index = byId;
+        }
       }
-    }
 
-    state = state.copyWith(
-      queue: cachedSongs,
-      currentIndex: index,
-      currentSong: cachedSongs[index],
-      isPlaying: false,
-      position: Duration(milliseconds: savedPositionMs),
-      duration: Duration.zero,
-    );
-    _syncBackgroundNowPlaying(cachedSongs[index]);
+      // 冷启动先刷新当前歌曲详情：缓存的 url 可能已过期，
+      // 先拿到新地址再进播放器，避免整队 setAudioSources 因一个坏地址失败。
+      var restoreSongs = cachedSongs;
+      try {
+        final refreshed = await _expander
+            .buildEntry(cachedSongs[index], refreshUrl: true)
+            .timeout(const Duration(seconds: 8));
+        if (refreshed != null) {
+          restoreSongs = List<Song>.from(cachedSongs);
+          restoreSongs[index] = refreshed.song;
+        }
+      } catch (e) {
+        AppLog.d('Restore refresh failed, use cached url: $e');
+      }
 
-    _suppressIndexSync = true;
-    final buildToken = ++_queueBuildToken;
-    // 记录待恢复位置，待队列展开加载音源时通过 initialPosition 生效
-    // （音源未加载前直接 seek 不会生效）
-    if (savedPositionMs > 0) {
-      _pendingRestorePosition = Duration(milliseconds: savedPositionMs);
+      state = state.copyWith(
+        queue: restoreSongs,
+        currentIndex: index,
+        currentSong: restoreSongs[index],
+        isPlaying: false,
+        position: Duration(milliseconds: savedPositionMs),
+        duration: Duration.zero,
+      );
+      _syncBackgroundNowPlaying(restoreSongs[index]);
+
+      _suppressIndexSync = true;
+      final buildToken = ++_queueBuildToken;
+      // 记录待恢复位置，待队列展开加载音源时通过 initialPosition 生效
+      // （音源未加载前直接 seek 不会生效）
+      if (savedPositionMs > 0) {
+        _pendingRestorePosition = Duration(milliseconds: savedPositionMs);
+      }
+      unawaited(
+        _expandQueueInBackground(
+          songs: restoreSongs,
+          currentSongSnapshot: restoreSongs[index],
+          buildToken: buildToken,
+        ),
+      );
+    } catch (e) {
+      AppLog.d('Restore queue failed: $e');
+      _suppressIndexSync = false;
+      _pendingRestorePosition = Duration.zero;
     }
-    _expandQueueInBackground(
-      songs: cachedSongs,
-      currentSongSnapshot: cachedSongs[index],
-      buildToken: buildToken,
-    );
   }
 
   Future<void> _persistQueueCache() async {
@@ -602,78 +668,106 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
     required Song currentSongSnapshot,
     required int buildToken,
   }) async {
-    // 并发解析（本地文件/详情请求混合），保持原始顺序。
-    // 邻近优先：先解当前及前后，首屏可更快就绪；并发 3 限流省流量。
-    final entries = List<PlayableEntry?>.filled(songs.length, null);
-    var startIndex = songs.indexWhere((s) => s.id == currentSongSnapshot.id);
-    if (startIndex < 0) startIndex = 0;
-    final order = QueueExpander.expandOrder(songs.length, startIndex);
-    var cursor = 0;
-    Future<void> worker() async {
-      while (true) {
-        final orderPos = cursor++;
-        if (orderPos >= order.length) return;
-        final index = order[orderPos];
-        if (!_mounted || buildToken != _queueBuildToken) return;
-        entries[index] = await _expander.buildEntry(songs[index]);
+    try {
+      // 并发解析（本地文件/详情请求混合），保持原始顺序。
+      // 邻近优先：先解当前及前后，首屏可更快就绪；并发 3 限流省流量。
+      final entries = List<PlayableEntry?>.filled(songs.length, null);
+      var startIndex = songs.indexWhere((s) => s.id == currentSongSnapshot.id);
+      if (startIndex < 0) startIndex = 0;
+      final order = QueueExpander.expandOrder(songs.length, startIndex);
+      var cursor = 0;
+      Future<void> worker() async {
+        while (true) {
+          final orderPos = cursor++;
+          if (orderPos >= order.length) return;
+          final index = order[orderPos];
+          if (!_mounted || buildToken != _queueBuildToken) return;
+          try {
+            entries[index] = await _expander.buildEntry(songs[index]);
+          } catch (e) {
+            AppLog.d('Expand entry failed for ${songs[index].id}: $e');
+            entries[index] = null;
+          }
+        }
       }
-    }
 
-    const concurrency = 3;
-    await Future.wait(
-      List.generate(concurrency, (_) => worker(), growable: false),
-    );
-
-    final playableSongs = <Song>[];
-    final sources = <AudioSource>[];
-    for (final entry in entries) {
-      if (entry == null) continue;
-      playableSongs.add(entry.song);
-      sources.add(entry.source);
-    }
-
-    if (!_mounted || buildToken != _queueBuildToken || playableSongs.isEmpty) {
-      if (buildToken == _queueBuildToken) {
-        _suppressIndexSync = false;
-      }
-      return;
-    }
-
-    var currentIndex = playableSongs.indexWhere(
-      (song) => _isSameSong(song, currentSongSnapshot),
-    );
-    if (currentIndex < 0) {
-      currentIndex = playableSongs.indexWhere(
-        (song) => song.id == currentSongSnapshot.id,
+      const concurrency = 3;
+      await Future.wait(
+        List.generate(concurrency, (_) => worker(), growable: false),
       );
-    }
-    if (currentIndex < 0) return;
 
-    final resumePosition = _audioPlayer.playing
-        ? _audioPlayer.position
-        : _pendingRestorePosition;
-    _pendingRestorePosition = Duration.zero;
-    final shouldResume = _audioPlayer.playing;
+      final playableSongs = <Song>[];
+      final sources = <AudioSource>[];
+      for (final entry in entries) {
+        if (entry == null) continue;
+        playableSongs.add(entry.song);
+        sources.add(entry.source);
+      }
 
-    await _audioPlayer.setAudioSources(
-      sources,
-      initialIndex: currentIndex,
-      initialPosition: resumePosition,
-      preload: true,
-    );
+      if (!_mounted ||
+          buildToken != _queueBuildToken ||
+          playableSongs.isEmpty) {
+        if (buildToken == _queueBuildToken) {
+          _suppressIndexSync = false;
+        }
+        return;
+      }
 
-    if (!_mounted || buildToken != _queueBuildToken) return;
+      var currentIndex = playableSongs.indexWhere(
+        (song) => _isSameSong(song, currentSongSnapshot),
+      );
+      if (currentIndex < 0) {
+        currentIndex = playableSongs.indexWhere(
+          (song) => song.id == currentSongSnapshot.id,
+        );
+      }
+      if (currentIndex < 0) {
+        if (buildToken == _queueBuildToken) _suppressIndexSync = false;
+        return;
+      }
 
-    state = state.copyWith(
-      queue: playableSongs,
-      currentIndex: currentIndex,
-      currentSong: playableSongs[currentIndex],
-    );
-    _syncBackgroundNowPlaying(playableSongs[currentIndex]);
-    _suppressIndexSync = false;
+      final resumePosition = _audioPlayer.playing
+          ? _audioPlayer.position
+          : _pendingRestorePosition;
+      _pendingRestorePosition = Duration.zero;
+      final shouldResume = _audioPlayer.playing;
 
-    if (shouldResume) {
-      _audioPlayer.play();
+      try {
+        await _audioPlayer.setAudioSources(
+          sources,
+          initialIndex: currentIndex,
+          initialPosition: resumePosition,
+          preload: true,
+        );
+      } catch (e) {
+        AppLog.d('setAudioSources(expand) failed: $e');
+        // 后台展开失败不打断当前播放：只复位标记，不触碰 state/position。
+        if (buildToken == _queueBuildToken) _suppressIndexSync = false;
+        _pendingRestorePosition = Duration.zero;
+        return;
+      }
+
+      if (!_mounted || buildToken != _queueBuildToken) return;
+
+      state = state.copyWith(
+        queue: playableSongs,
+        currentIndex: currentIndex,
+        currentSong: playableSongs[currentIndex],
+      );
+      _syncBackgroundNowPlaying(playableSongs[currentIndex]);
+      _suppressIndexSync = false;
+
+      if (shouldResume) {
+        try {
+          _audioPlayer.play();
+        } catch (e) {
+          AppLog.d('resume play() failed: $e');
+        }
+      }
+    } catch (e) {
+      AppLog.d('Expand queue failed: $e');
+      if (buildToken == _queueBuildToken) _suppressIndexSync = false;
+      _pendingRestorePosition = Duration.zero;
     }
   }
 
@@ -805,7 +899,12 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
   /// 供 App 生命周期回调在退到后台时立即保存进度
   Future<void> persistPlaybackStateNow() async {
     _lastPositionPersist = DateTime.now();
-    await _persistPlaybackState(includePosition: true);
+    // 退后台时把防抖中未落盘的队列也刷掉，否则重启时 index/queue 错位。
+    await _persistence.flushPending(
+      currentIndex: state.currentIndex,
+      currentSongId: state.currentSong?.id,
+      positionMs: state.position.inMilliseconds,
+    );
   }
 
   // --- 通知栏 / 锁屏 / 耳机线控指令入口 ---
@@ -829,9 +928,25 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
 
   void togglePlayPause() {
     if (_audioPlayer.playing) {
-      _audioPlayer.pause();
-    } else {
+      try {
+        _audioPlayer.pause();
+      } catch (e) {
+        AppLog.d('pause() failed: $e');
+      }
+      return;
+    }
+    // 冷启动恢复失败/展开中时 sequence 可能为空：此时空 play() 无反应，
+    // 表现为“重启后点播放没反应”。有队列则重建当前队再播。
+    try {
+      final hasSource = _audioPlayer.sequence.isNotEmpty;
+      if (!hasSource && state.queue.isNotEmpty && state.currentIndex >= 0) {
+        final idx = state.currentIndex.clamp(0, state.queue.length - 1);
+        unawaited(logQueue(List<Song>.from(state.queue), idx));
+        return;
+      }
       _audioPlayer.play();
+    } catch (e) {
+      AppLog.d('togglePlayPause failed: $e');
     }
   }
 

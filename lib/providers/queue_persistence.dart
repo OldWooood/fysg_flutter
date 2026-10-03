@@ -26,12 +26,17 @@ class QueuePersistence {
   Future<File>? _cacheFileFuture;
   Timer? _queueDebounce;
   Timer? _stateDebounce;
+  List<Song>? _pendingQueueSnapshot;
+  ({int currentIndex, int? currentSongId, int positionMs})?
+  _pendingPlaybackState;
   bool _disposed = false;
 
   void dispose() {
     _disposed = true;
     _queueDebounce?.cancel();
     _stateDebounce?.cancel();
+    _pendingQueueSnapshot = null;
+    _pendingPlaybackState = null;
   }
 
   Future<File> _cacheFile() => _cacheFileFuture ??= getApplicationDocumentsDirectory()
@@ -67,9 +72,46 @@ class QueuePersistence {
   void schedulePersistQueueCache(List<Song> queue) {
     _queueDebounce?.cancel();
     final snapshot = List<Song>.from(_cap(queue));
+    _pendingQueueSnapshot = snapshot;
     _queueDebounce = Timer(AppConstants.queuePersistDebounce, () {
+      _pendingQueueSnapshot = null;
       persistQueueCacheNow(snapshot);
     });
+  }
+
+  /// 退后台/杀进程前把防抖中未落盘的队列+状态一次性刷盘，
+  /// 否则 500ms 内被杀会导致文件是旧队列、index 是新 index，重启错位。
+  Future<void> flushPending({
+    int? currentIndex,
+    int? currentSongId,
+    int? positionMs,
+  }) async {
+    if (_disposed) return;
+    _queueDebounce?.cancel();
+    _stateDebounce?.cancel();
+    final queueSnapshot = _pendingQueueSnapshot;
+    _pendingQueueSnapshot = null;
+    final pendingState = _pendingPlaybackState;
+    _pendingPlaybackState = null;
+    if (queueSnapshot != null && queueSnapshot.isNotEmpty) {
+      await persistQueueCacheNow(queueSnapshot);
+    }
+    final index = currentIndex ?? pendingState?.currentIndex;
+    if (index != null && index >= 0) {
+      await persistPlaybackStateNow(
+        currentIndex: index,
+        currentSongId: currentSongId ?? pendingState?.currentSongId,
+        positionMs: positionMs ?? pendingState?.positionMs ?? 0,
+        includePosition: true,
+      );
+    } else if (pendingState != null) {
+      await persistPlaybackStateNow(
+        currentIndex: pendingState.currentIndex,
+        currentSongId: pendingState.currentSongId,
+        positionMs: pendingState.positionMs,
+        includePosition: true,
+      );
+    }
   }
 
   /// 启动恢复统一入口：优先读文件，缺失再回退旧 SP 并迁移。
@@ -128,7 +170,13 @@ class QueuePersistence {
     bool includePosition = false,
   }) {
     _stateDebounce?.cancel();
+    _pendingPlaybackState = (
+      currentIndex: currentIndex,
+      currentSongId: currentSongId,
+      positionMs: positionMs,
+    );
     _stateDebounce = Timer(AppConstants.queuePersistDebounce, () {
+      _pendingPlaybackState = null;
       persistPlaybackStateNow(
         currentIndex: currentIndex,
         currentSongId: currentSongId,

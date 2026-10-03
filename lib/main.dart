@@ -4,6 +4,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'audio/app_audio_handler.dart';
+import 'api/asset_config.dart';
+import 'api/fysg_service.dart';
 import 'l10n/app_localizations.dart';
 import 'providers/shared_preferences_provider.dart';
 import 'providers/theme_provider.dart';
@@ -27,8 +29,22 @@ Future<void> bootAndRun() async {
   SharedPreferences? prefs;
   String? bootError;
   try {
-    prefs = await SharedPreferences.getInstance()
+    final loaded = await SharedPreferences.getInstance()
         .timeout(const Duration(seconds: 5));
+    prefs = loaded;
+    // 冷启动先用上次的资源域名，随后后台刷新（CDN 迁移后自动跟随）。
+    AssetConfig.loadFromPrefs(loaded);
+    try {
+      final service = FysgService();
+      try {
+        await service.fetchAssetDomains().timeout(const Duration(seconds: 8));
+        await AssetConfig.saveToPrefs(loaded);
+      } finally {
+        service.dispose();
+      }
+    } catch (e) {
+      AppLog.d('Boot asset domains refresh failed: $e');
+    }
   } catch (e) {
     AppLog.d('Boot prefs failed (degraded mode): $e');
     bootError = '$e';
