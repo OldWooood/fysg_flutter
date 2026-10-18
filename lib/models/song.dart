@@ -168,8 +168,7 @@ class Song {
           lyrics == other.lyrics;
 
   @override
-  int get hashCode =>
-      Object.hash(id, name, artist, album, cover, url, lyrics);
+  int get hashCode => Object.hash(id, name, artist, album, cover, url, lyrics);
 
   /// 轻量持久化快照：去掉 lyrics（LRC 可达几十KB），避免 SP 单 key 膨胀、
   /// 启动全量 decode 卡顿。歌词只放内存 + 按需请求详情。

@@ -15,12 +15,11 @@ class ImageCacheService {
   static CacheManager? _cacheManager;
 
   /// 全局图片磁盘缓存：200 个 / 7 天，避免长列表无限膨胀。
-  static CacheManager get cacheManager =>
-      _cacheManager ??= CacheManager(
-        Config(
-          'fysgImageCache',
-          maxNrOfCacheObjects: AppConstants.imageCacheMaxObjects,
-          stalePeriod: AppConstants.imageCacheStalePeriod,
-        ),
-      );
+  static CacheManager get cacheManager => _cacheManager ??= CacheManager(
+    Config(
+      'fysgImageCache',
+      maxNrOfCacheObjects: AppConstants.imageCacheMaxObjects,
+      stalePeriod: AppConstants.imageCacheStalePeriod,
+    ),
+  );
 }

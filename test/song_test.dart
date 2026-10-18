@@ -46,11 +46,7 @@ void main() {
     });
 
     test('relative audio url is prefixed with song_high', () {
-      final song = Song.fromJson({
-        'id': 3,
-        'name': 't',
-        'url': '/abc/x.mp3',
-      });
+      final song = Song.fromJson({'id': 3, 'name': 't', 'url': '/abc/x.mp3'});
       expect(song.url, contains('song_high'));
     });
   });

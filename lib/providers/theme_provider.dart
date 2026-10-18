@@ -7,8 +7,9 @@ const _themeModeKey = 'app_theme_mode';
 
 /// 跟随系统 / 浅色 / 深色三档，持久化到 SP。
 /// SP 未就绪（降级启动）时回退跟随系统，不抛异常。
-final themeModeProvider =
-    NotifierProvider<ThemeModeNotifier, ThemeMode>(ThemeModeNotifier.new);
+final themeModeProvider = NotifierProvider<ThemeModeNotifier, ThemeMode>(
+  ThemeModeNotifier.new,
+);
 
 class ThemeModeNotifier extends Notifier<ThemeMode> {
   @override
@@ -30,14 +31,11 @@ class ThemeModeNotifier extends Notifier<ThemeMode> {
     state = mode;
     try {
       final prefs = ref.read(sharedPreferencesProvider);
-      await prefs.setString(
-        _themeModeKey,
-        switch (mode) {
-          ThemeMode.light => 'light',
-          ThemeMode.dark => 'dark',
-          ThemeMode.system => 'system',
-        },
-      );
+      await prefs.setString(_themeModeKey, switch (mode) {
+        ThemeMode.light => 'light',
+        ThemeMode.dark => 'dark',
+        ThemeMode.system => 'system',
+      });
     } catch (_) {}
   }
 }

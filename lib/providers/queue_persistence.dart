@@ -39,10 +39,13 @@ class QueuePersistence {
     _pendingPlaybackState = null;
   }
 
-  Future<File> _cacheFile() => _cacheFileFuture ??= getApplicationDocumentsDirectory()
-      .then((dir) => File('${dir.path}/queue_cache.json'));
+  Future<File> _cacheFile() =>
+      _cacheFileFuture ??= getApplicationDocumentsDirectory().then(
+        (dir) => File('${dir.path}/queue_cache.json'),
+      );
 
-  List<Song> _cap(List<Song> queue) => queue.length <= AppConstants.maxQueueItems
+  List<Song> _cap(List<Song> queue) =>
+      queue.length <= AppConstants.maxQueueItems
       ? queue
       : queue.sublist(0, AppConstants.maxQueueItems);
 
@@ -52,9 +55,7 @@ class QueuePersistence {
     try {
       final capped = _cap(queue);
       // 轻量快照去歌词：500 首 * 几十KB LRC 会撑爆 SP 且启动 decode 卡顿
-      final encoded = json.encode(
-        capped.map((s) => s.toCacheJson()).toList(),
-      );
+      final encoded = json.encode(capped.map((s) => s.toCacheJson()).toList());
       final file = await _cacheFile();
       await file.writeAsString(encoded, flush: true);
       // 迁移清理：文件写成功后删掉旧 SP 大 key

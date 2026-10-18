@@ -46,7 +46,10 @@ class AppAudioHandler extends BaseAudioHandler with SeekHandler {
   @override
   Future<void> stop() async => _delegate?.onStop();
 
-  Future<void> setNowPlaying(Song? song, {String unknownArtist = 'Unknown Artist'}) async {
+  Future<void> setNowPlaying(
+    Song? song, {
+    String unknownArtist = 'Unknown Artist',
+  }) async {
     if (song == null) return;
     mediaItem.add(
       MediaItem(

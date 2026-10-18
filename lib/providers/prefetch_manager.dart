@@ -8,7 +8,8 @@ import '../utils/app_log.dart';
 ///   不再用全局 bool 丢弃第二次预取。
 /// - 播放过半才触发，且同一切换只触发一次（_lastPrefetchSongId）。
 class PrefetchManager {
-  PrefetchManager({required DownloadService downloads}) : _downloads = downloads;
+  PrefetchManager({required DownloadService downloads})
+    : _downloads = downloads;
 
   final DownloadService _downloads;
   bool _prefetchCacheLoaded = false;

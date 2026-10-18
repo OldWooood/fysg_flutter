@@ -35,22 +35,26 @@ void main() {
 
   group('Song.fromJson asset bases', () {
     test('joins audio url with audioBase without duplication', () {
-      final song = Song.fromJson({
-        'id': 1,
-        'name': 'a',
-        'url': '/x/y.mp3',
-        'album': {'cover': '/images/c.jpg'},
-      }, assetBase: 'https://img.example.com', audioBase: 'https://img.example.com/song_high');
+      final song = Song.fromJson(
+        {
+          'id': 1,
+          'name': 'a',
+          'url': '/x/y.mp3',
+          'album': {'cover': '/images/c.jpg'},
+        },
+        assetBase: 'https://img.example.com',
+        audioBase: 'https://img.example.com/song_high',
+      );
       expect(song.url, 'https://img.example.com/song_high/x/y.mp3');
       expect(song.cover, 'https://img.example.com/images/c.jpg');
     });
 
     test('keeps /song_high-prefixed urls on image base', () {
-      final song = Song.fromJson({
-        'id': 1,
-        'name': 'a',
-        'url': '/song_high/x.mp3',
-      }, assetBase: 'https://img.example.com', audioBase: 'https://img.example.com/song_high');
+      final song = Song.fromJson(
+        {'id': 1, 'name': 'a', 'url': '/song_high/x.mp3'},
+        assetBase: 'https://img.example.com',
+        audioBase: 'https://img.example.com/song_high',
+      );
       expect(song.url, 'https://img.example.com/song_high/x.mp3');
     });
   });

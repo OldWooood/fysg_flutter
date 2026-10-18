@@ -1,5 +1,7 @@
 # 福音诗歌 (Gospel Songs)
 
+![CI](https://github.com/OldWooood/fysg_flutter/actions/workflows/ci.yml/badge.svg)
+
 一个基于 Flutter 开发的高颜值、极简主义福音诗歌音乐播放器。本项目旨在为弟兄姊妹提供愉悦的查阅和聆听体验，特别针对年长用户进行了字体和操作优化。
 
 ## 特色功能
@@ -21,8 +23,8 @@
 
 *   **核心框架**: [Flutter](https://flutter.dev/)
 *   **状态管理**: [Flutter Riverpod](https://riverpod.dev/)
-*   **音频引擎**: [just_audio](https://pub.dev/packages/just_audio)
-*   **网络请求**: [http](https://pub.dev/packages/http) & [dio](https://pub.dev/packages/dio) (用于下载)
+*   **音频引擎**: [just_audio](https://pub.dev/packages/just_audio) + [audio_service](https://pub.dev/packages/audio_service)
+*   **网络请求**: [dio](https://pub.dev/packages/dio)（API 与下载统一走 dio，带超时/重试/取消）
 *   **图片处理**: [cached_network_image](https://pub.dev/packages/cached_network_image)
 *   **本地存储**: [shared_preferences](https://pub.dev/packages/shared_preferences) & [path_provider](https://pub.dev/packages/path_provider)
 
@@ -48,6 +50,32 @@
     ```bash
     flutter run
     ```
+
+## 开发
+
+```bash
+flutter analyze                              # 静态检查（CI 必过）
+flutter test                                 # 单元/服务层测试
+dart format --output=none --set-exit-if-changed lib test integration_test
+```
+
+持续集成见 `.github/workflows/ci.yml`（格式检查 + analyze + test）。
+
+### 发布构建
+
+Flutter 默认已在 release 构建启用 R8 代码压缩与资源收缩；Dart 侧建议同时开启混淆与符号分离，
+包体更小且线上堆栈可回溯（符号文件务必归档，崩溃还原依赖它）：
+
+```bash
+flutter build apk --release --obfuscate --split-debug-info=build/symbols
+flutter build appbundle --release --obfuscate --split-debug-info=build/symbols
+```
+
+崩溃还原：`flutter symbolize -i <stacktrace> -d build/symbols/app.android-arm64.symbols`
+
+> 注：Android 网络安全配置只允许 HTTPS（`android/app/src/main/res/xml/network_security_config.xml`），
+> 已为 localhost/模拟器保留明文回环。若服务端 CDN 迁移到 http 域名，需把该域名加进白名单，
+> 否则封面/播放会被系统拦截。
 
 ---
 

@@ -97,8 +97,6 @@ void main() {
 
     await AppAudioService.handler?.skipToPrevious();
     await tester.pump(const Duration(seconds: 3));
-    debugPrint(
-      'E2E_DONE id=${container.read(playerProvider).currentSong?.id}',
-    );
+    debugPrint('E2E_DONE id=${container.read(playerProvider).currentSong?.id}');
   });
 }

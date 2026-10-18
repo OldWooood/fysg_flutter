@@ -33,18 +33,10 @@ class SearchSuggestionsList extends StatelessWidget {
           leading: Icon(Icons.search, color: Theme.of(context).hintColor),
           title: highlight
               ? highlightQuery(name, query, context)
-              : Text(
-                  name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
+              : Text(name, maxLines: 1, overflow: TextOverflow.ellipsis),
           subtitle: artist.isEmpty
               ? null
-              : Text(
-                  artist,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
+              : Text(artist, maxLines: 1, overflow: TextOverflow.ellipsis),
           onTap: () => onSelect(name),
         );
       },
