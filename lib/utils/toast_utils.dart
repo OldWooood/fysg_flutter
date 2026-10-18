@@ -8,12 +8,13 @@ class ToastUtils {
     _show(context, message, Colors.black87, Icons.info_outline);
   }
 
-  static void showSuccess(BuildContext context, String message) {
-    _show(context, message, Colors.green.shade700, Icons.check_circle_outline);
-  }
-
   static void showError(BuildContext context, String message) {
-    _show(context, message, Theme.of(context).colorScheme.error, Icons.error_outline);
+    _show(
+      context,
+      message,
+      Theme.of(context).colorScheme.error,
+      Icons.error_outline,
+    );
   }
 
   /// AppError -> 本地化文案：网络层中文硬编码不再直达英文用户

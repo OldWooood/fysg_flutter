@@ -36,11 +36,6 @@ class FavoritePlaylistService {
     return result;
   }
 
-  Future<bool> isFavorite(Playlist playlist) async {
-    final list = await getFavorites();
-    return list.any((p) => p.id == playlist.id && p.type == playlist.type);
-  }
-
   Future<void> toggleFavorite(Playlist playlist) async {
     final raw = _prefs.getStringList(AppConstants.spFavoritePlaylists) ?? [];
     final key = '${playlist.type}:${playlist.id}';

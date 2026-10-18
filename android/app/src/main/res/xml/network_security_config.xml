@@ -1,10 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  生产只允许 HTTPS：服务端下发的 image-domain / audio-domain 均为 https。
+  如未来 CDN 改为 http 明文，需在此为对应域名单独加 domain-config，
+  否则封面/播放会被系统拦截（表现为全部加载失败）。
+-->
 <network-security-config>
-    <base-config cleartextTrafficPermitted="true">
+    <base-config cleartextTrafficPermitted="false">
         <trust-anchors>
             <certificates src="system" />
         </trust-anchors>
     </base-config>
+    <!-- 仅调试用：本机/模拟器回环地址仍允许明文（本地联调后端） -->
     <domain-config cleartextTrafficPermitted="true">
         <domain includeSubdomains="true">127.0.0.1</domain>
         <domain includeSubdomains="true">localhost</domain>

@@ -73,8 +73,6 @@ class AppConstants {
 
   // 队列上限：展示/持久化/后台展开统一截断，避免 500 首全量网络解析 + SP 膨胀
   static const int maxQueueItems = 200;
-  // 后台展开时以当前为中心的优先窗口（首屏可更快就绪，其余随后补齐）
-  static const int queueExpandWindow = 40;
 
   // 持久化防抖：切歌时全量 json.encode 大队列很贵，合并写盘
   static const Duration queuePersistDebounce = Duration(milliseconds: 500);
@@ -84,7 +82,6 @@ class AppConstants {
 
   // UI 相关
   static const double loadMoreTriggerExtent = 600.0;
-  static const double miniPlayerHeight = 80.0;
   static const Duration searchDebounceMs = Duration(milliseconds: 300);
   // 列表预构建范围：之前全 800，过大；按机型取 250~500
   static const double listCacheExtent = 400.0;

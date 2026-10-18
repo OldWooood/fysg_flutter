@@ -27,11 +27,8 @@ class AppLocalizations {
       'no_downloads': 'No downloads yet',
       'no_lyrics': 'No Lyrics Available',
       'search_hint': 'Search songs',
-      'categories': 'Categories',
       'albums': 'Albums',
       'playlists': 'Playlists',
-      'authors': 'Authors',
-      'books': 'Books',
       'song_tab': 'Song',
       'lyrics_tab': 'Lyrics',
       'search_action': 'Search',
@@ -40,15 +37,12 @@ class AppLocalizations {
       'clear_history': 'Clear History',
       'download_started': 'Download started',
       'already_downloaded': 'Already downloaded',
-      'loop': 'Loop',
       'download': 'Download',
       'playlist': 'Playlist',
       'loop_order': 'Order',
       'loop_shuffle': 'Shuffle',
       'loop_single': 'Loop One',
       'favorites': 'Playlist Favorites',
-      'favorite_playlist': 'Favorite Playlist',
-      'favorited': 'Favorited',
       'add_favorite': 'Add to Favorites',
       'remove_favorite': 'Remove Favorite',
       'no_favorites': 'No favorites yet',
@@ -58,20 +52,12 @@ class AppLocalizations {
       'unknown_artist': 'Unknown Artist',
       'search_empty_hint': 'Search songs, albums or artists',
       'share': 'Share',
-      'speed': 'Speed',
       'share_text_song': 'Recommended a gospel song: ',
       'play': 'Play',
       'pause': 'Pause',
       'empty_playlist': 'This playlist is empty',
-      'sleep_timer': 'Sleep timer',
-      'sleep_off': 'Off',
-      'sleep_15': '15 min',
-      'sleep_30': '30 min',
-      'sleep_60': '60 min',
-      'sleep_set': 'Sleep timer set',
       'cancel': 'Cancel',
       'confirm': 'Confirm',
-      'undo': 'Undo',
       'clear_history_confirm': 'Clear all search history?',
       'deleted': 'Deleted',
       'theme': 'Theme',
@@ -85,7 +71,6 @@ class AppLocalizations {
       'error_network': 'Network failed, try again later',
       'error_cache': 'Cache failed',
       'download_failed': 'Download failed',
-      'download_progress': 'Downloading',
     },
     'zh': {
       'home': '首页',
@@ -103,11 +88,8 @@ class AppLocalizations {
       'no_downloads': '暂无下载内容',
       'no_lyrics': '暂无歌词',
       'search_hint': '搜索歌曲',
-      'categories': '全部分类',
       'albums': '专辑',
       'playlists': '歌单',
-      'authors': '歌手',
-      'books': '诗歌本',
       'song_tab': '音乐',
       'lyrics_tab': '歌词',
       'search_action': '搜索',
@@ -116,15 +98,12 @@ class AppLocalizations {
       'clear_history': '清空记录',
       'download_started': '开始下载',
       'already_downloaded': '文件已存在',
-      'loop': '循环',
       'download': '下载',
       'playlist': '列表',
       'loop_order': '顺序',
       'loop_shuffle': '随机',
       'loop_single': '单曲',
       'favorites': '歌单收藏',
-      'favorite_playlist': '收藏歌单',
-      'favorited': '已收藏',
       'add_favorite': '收藏',
       'remove_favorite': '取消收藏',
       'no_favorites': '暂无收藏',
@@ -134,20 +113,12 @@ class AppLocalizations {
       'unknown_artist': '未知歌手',
       'search_empty_hint': '搜索歌曲、专辑或歌手',
       'share': '分享',
-      'speed': '倍速',
       'share_text_song': '推荐一首福音诗歌：',
       'play': '播放',
       'pause': '暂停',
       'empty_playlist': '这个歌单是空的',
-      'sleep_timer': '睡眠定时',
-      'sleep_off': '关闭',
-      'sleep_15': '15 分钟',
-      'sleep_30': '30 分钟',
-      'sleep_60': '60 分钟',
-      'sleep_set': '已设置睡眠定时',
       'cancel': '取消',
       'confirm': '确定',
-      'undo': '撤销',
       'clear_history_confirm': '确定清空全部搜索历史？',
       'deleted': '已删除',
       'theme': '主题',
@@ -161,7 +132,6 @@ class AppLocalizations {
       'error_network': '网络连接失败，请稍后重试',
       'error_cache': '缓存操作失败',
       'download_failed': '下载失败',
-      'download_progress': '下载中',
     },
   };
 
@@ -187,11 +157,8 @@ class AppLocalizations {
   String get noDownloads => _get(locale, 'no_downloads');
   String get noLyrics => _get(locale, 'no_lyrics');
   String get searchHint => _get(locale, 'search_hint');
-  String get categories => _get(locale, 'categories');
   String get albums => _get(locale, 'albums');
   String get playlists => _get(locale, 'playlists');
-  String get authors => _get(locale, 'authors');
-  String get books => _get(locale, 'books');
   String get songTab => _get(locale, 'song_tab');
   String get lyricsTab => _get(locale, 'lyrics_tab');
   String get searchAction => _get(locale, 'search_action');
@@ -200,15 +167,12 @@ class AppLocalizations {
   String get clearHistory => _get(locale, 'clear_history');
   String get downloadStarted => _get(locale, 'download_started');
   String get alreadyDownloaded => _get(locale, 'already_downloaded');
-  String get loop => _get(locale, 'loop');
   String get download => _get(locale, 'download');
   String get playlist => _get(locale, 'playlist');
   String get loopOrder => _get(locale, 'loop_order');
   String get loopShuffle => _get(locale, 'loop_shuffle');
   String get loopSingle => _get(locale, 'loop_single');
   String get favorites => _get(locale, 'favorites');
-  String get favoritePlaylist => _get(locale, 'favorite_playlist');
-  String get favorited => _get(locale, 'favorited');
   String get addFavorite => _get(locale, 'add_favorite');
   String get removeFavorite => _get(locale, 'remove_favorite');
   String get noFavorites => _get(locale, 'no_favorites');
@@ -218,16 +182,13 @@ class AppLocalizations {
   String get unknownArtist => _get(locale, 'unknown_artist');
   String get searchEmptyHint => _get(locale, 'search_empty_hint');
   String get share => _get(locale, 'share');
-  String get speed => _get(locale, 'speed');
   String get play => _get(locale, 'play');
   String get pause => _get(locale, 'pause');
-  String shareTextSong(String song) => '${_get(locale, 'share_text_song')}$song';
+  String shareTextSong(String song) =>
+      '${_get(locale, 'share_text_song')}$song';
   String get emptyPlaylist => _get(locale, 'empty_playlist');
-  String get sleepTimer => _get(locale, 'sleep_timer');
-  String get sleepOff => _get(locale, 'sleep_off');
   String get cancel => _get(locale, 'cancel');
   String get confirm => _get(locale, 'confirm');
-  String get undo => _get(locale, 'undo');
   String get clearHistoryConfirm => _get(locale, 'clear_history_confirm');
   String get deleted => _get(locale, 'deleted');
   String get theme => _get(locale, 'theme');
@@ -241,7 +202,8 @@ class AppLocalizations {
   String get errorNetwork => _get(locale, 'error_network');
   String get errorCache => _get(locale, 'error_cache');
   String get downloadFailed => _get(locale, 'download_failed');
-  String errorNotFound(String resource) => '$resource${locale.languageCode == 'zh' ? '不存在' : ' not found'}';
+  String errorNotFound(String resource) =>
+      '$resource${locale.languageCode == 'zh' ? '不存在' : ' not found'}';
 }
 
 class AppLocalizationsDelegate extends LocalizationsDelegate<AppLocalizations> {
