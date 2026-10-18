@@ -7,8 +7,9 @@ import '../../api/image_cache_service.dart';
 import '../../l10n/app_localizations.dart';
 import '../../models/playlist.dart';
 import '../../providers/player_provider.dart';
-import '../../utils/app_log.dart';
 import '../../utils/constants.dart';
+import '../../utils/paged_list_controller.dart';
+import '../../utils/toast_utils.dart';
 import '../common/error_view.dart';
 import 'playlist_detail_page.dart';
 
@@ -73,232 +74,180 @@ class _CategoryGrid extends ConsumerStatefulWidget {
 
 class _CategoryGridState extends ConsumerState<_CategoryGrid> {
   final ScrollController _scrollController = ScrollController();
-  List<Playlist> _items = [];
-  int _currentPage = 0;
-  bool _isLoading = true;
-  bool _isLoadingMore = false;
-  bool _hasMore = true;
-  String? _errorMessage;
-  // 分页错误独立状态：之前与首屏共用 _errorMessage，第2页抖动吞掉整个列表
-  bool _loadMoreError = false;
+  late final PagedListController<Playlist> _controller;
 
   @override
   void initState() {
     super.initState();
-    _fetchInitialData();
+    _controller = PagedListController<Playlist>(
+      fetch: (page) {
+        final service = ref.read(fysgServiceProvider);
+        return switch (widget.type) {
+          'album' => service.getAlbumsPaged(page: page),
+          'playlist' => service.getPlaylistsPaged(page: page),
+          _ => Future.error(UnsupportedError('Unknown type: ${widget.type}')),
+        };
+      },
+      onTransientError: (error) {
+        if (!mounted) return;
+        ToastUtils.showAppError(context, error);
+      },
+    );
+    _controller.refresh();
     _scrollController.addListener(_onScroll);
   }
 
-  Future<void> _fetchByType(int page) async {
-    final service = ref.read(fysgServiceProvider);
-    final result = switch (widget.type) {
-      'album' => await service.getAlbumsPaged(page: page),
-      'playlist' => await service.getPlaylistsPaged(page: page),
-      _ => throw UnsupportedError('Unknown type: ${widget.type}'),
-    };
-
-    if (!mounted) return;
-
-    result.when(
-      ok: (paged) {
-        final items = paged.items;
-        setState(() {
-          if (page == 0) {
-            _items = items;
-            _isLoading = false;
-            _errorMessage = null;
-          } else {
-            _items.addAll(items);
-            _currentPage = page;
-            _isLoadingMore = false;
-          }
-          _loadMoreError = false;
-          _hasMore = paged.hasMore;
-        });
-      },
-      err: (error) {
-        setState(() {
-          if (page == 0) {
-            _errorMessage = error.message;
-            _isLoading = false;
-          } else {
-            // 分页失败只置 footer 重试，不碰已有列表
-            _isLoadingMore = false;
-            _loadMoreError = true;
-          }
-        });
-        if (page == 0) {
-          AppLog.d('Error fetching ${widget.type}: $error');
-        }
-      },
-    );
-  }
-
-  Future<void> _fetchInitialData() async {
-    await _fetchByType(0);
-  }
-
-  Future<void> _onRefresh() async {
-    setState(() {
-      _currentPage = 0;
-      _hasMore = true;
-      _loadMoreError = false;
-    });
-    await _fetchByType(0);
-  }
-
   void _onScroll() {
-    if (!_scrollController.hasClients || _isLoadingMore || !_hasMore) return;
+    if (!_scrollController.hasClients) return;
     if (_scrollController.position.extentAfter >
         AppConstants.loadMoreTriggerExtent) {
       return;
     }
-    _loadMore();
-  }
-
-  Future<void> _loadMore() async {
-    if (_isLoadingMore) return;
-    setState(() {
-      _isLoadingMore = true;
-      _loadMoreError = false;
-    });
-    await _fetchByType(_currentPage + 1);
+    _controller.loadMore();
   }
 
   @override
   void dispose() {
     _scrollController.dispose();
+    _controller.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_isLoading) return const Center(child: CircularProgressIndicator());
+    return ListenableBuilder(
+      listenable: _controller,
+      builder: (context, _) {
+        final items = _controller.items;
+        if (_controller.isLoading) {
+          return const Center(child: CircularProgressIndicator());
+        }
 
-    if (_errorMessage != null) {
-      return ErrorView(
-        message: _errorMessage!,
-        onRetry: () {
-          setState(() {
-            _errorMessage = null;
-            _isLoading = true;
-          });
-          _fetchInitialData();
-        },
-      );
-    }
+        final error = _controller.error;
+        if (error != null) {
+          return ErrorView(
+            message: ToastUtils.localizedAppError(context, error),
+            onRetry: _controller.retry,
+          );
+        }
 
-    if (_items.isEmpty) {
-      return RefreshIndicator(
-        onRefresh: _onRefresh,
-        child: ListView(
-          children: [
-            const SizedBox(height: 120),
-            EmptyView(message: AppLocalizations.of(context).noResults),
-          ],
-        ),
-      );
-    }
-
-    final placeholderColor = Theme.of(
-      context,
-    ).colorScheme.surfaceContainerHighest;
-
-    return RefreshIndicator(
-      onRefresh: _onRefresh,
-      child: MasonryGridView.count(
-        controller: _scrollController,
-        cacheExtent: AppConstants.listCacheExtent,
-        padding: const EdgeInsets.all(16),
-        crossAxisCount: 2,
-        mainAxisSpacing: 16,
-        crossAxisSpacing: 16,
-        itemCount: _items.length + ((_isLoadingMore || _loadMoreError) ? 1 : 0),
-        itemBuilder: (context, index) {
-          if (index >= _items.length) {
-            if (_loadMoreError) {
-              return LoadMoreErrorFooter(onRetry: _loadMore);
-            }
-            return const Center(child: CircularProgressIndicator());
-          }
-          final item = _items[index];
-          return RepaintBoundary(
-            child: GestureDetector(
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => PlaylistDetailPage(playlist: item),
-                  ),
-                );
-              },
-              child: Container(
-                decoration: BoxDecoration(
-                  color: Theme.of(context).cardColor,
-                  borderRadius: BorderRadius.circular(12),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.06),
-                      blurRadius: 6,
-                      offset: const Offset(0, 2),
-                    ),
-                  ],
-                ),
-                clipBehavior: Clip.antiAlias,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    AspectRatio(
-                      aspectRatio: 1,
-                      child: Hero(
-                        tag: 'playlist-cover-${widget.type}-${item.id}',
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: placeholderColor,
-                            image: item.cover != null
-                                ? DecorationImage(
-                                    image: CachedNetworkImageProvider(
-                                      item.cover!,
-                                      headers: ImageCacheService.headers,
-                                      cacheManager:
-                                          ImageCacheService.cacheManager,
-                                      // 网格小图按 ~200px 解码，避免全分辨率解码 OOM
-                                      maxWidth: 400,
-                                      maxHeight: 400,
-                                    ),
-                                    fit: BoxFit.cover,
-                                  )
-                                : null,
-                          ),
-                          child: item.cover == null
-                              ? Center(
-                                  child: Icon(
-                                    Icons.music_note,
-                                    size: 40,
-                                    color: Theme.of(context).hintColor,
-                                  ),
-                                )
-                              : null,
-                        ),
-                      ),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.all(12),
-                      child: Text(
-                        item.name,
-                        style: const TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 16,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+        if (items.isEmpty) {
+          return RefreshIndicator(
+            onRefresh: _controller.refresh,
+            child: ListView(
+              children: [
+                const SizedBox(height: 120),
+                EmptyView(message: AppLocalizations.of(context).noResults),
+              ],
             ),
           );
-        },
-      ),
+        }
+
+        final placeholderColor = Theme.of(
+          context,
+        ).colorScheme.surfaceContainerHighest;
+
+        return RefreshIndicator(
+          onRefresh: _controller.refresh,
+          child: MasonryGridView.count(
+            controller: _scrollController,
+            cacheExtent: AppConstants.listCacheExtent,
+            padding: const EdgeInsets.all(16),
+            crossAxisCount: 2,
+            mainAxisSpacing: 16,
+            crossAxisSpacing: 16,
+            itemCount:
+                items.length +
+                ((_controller.isLoadingMore || _controller.loadMoreError)
+                    ? 1
+                    : 0),
+            itemBuilder: (context, index) {
+              if (index >= items.length) {
+                if (_controller.loadMoreError) {
+                  return LoadMoreErrorFooter(onRetry: _controller.loadMore);
+                }
+                return const Center(child: CircularProgressIndicator());
+              }
+              final item = items[index];
+              return RepaintBoundary(
+                child: GestureDetector(
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => PlaylistDetailPage(playlist: item),
+                      ),
+                    );
+                  },
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).cardColor,
+                      borderRadius: BorderRadius.circular(12),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.06),
+                          blurRadius: 6,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    clipBehavior: Clip.antiAlias,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        AspectRatio(
+                          aspectRatio: 1,
+                          child: Hero(
+                            tag: 'playlist-cover-${widget.type}-${item.id}',
+                            child: Container(
+                              decoration: BoxDecoration(
+                                color: placeholderColor,
+                                image: item.cover != null
+                                    ? DecorationImage(
+                                        image: CachedNetworkImageProvider(
+                                          item.cover!,
+                                          headers: ImageCacheService.headers,
+                                          cacheManager:
+                                              ImageCacheService.cacheManager,
+                                          // 网格小图按 ~200px 解码，避免全分辨率解码 OOM
+                                          maxWidth: 400,
+                                          maxHeight: 400,
+                                        ),
+                                        fit: BoxFit.cover,
+                                      )
+                                    : null,
+                              ),
+                              child: item.cover == null
+                                  ? Center(
+                                      child: Icon(
+                                        Icons.music_note,
+                                        size: 40,
+                                        color: Theme.of(context).hintColor,
+                                      ),
+                                    )
+                                  : null,
+                            ),
+                          ),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.all(12),
+                          child: Text(
+                            item.name,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        );
+      },
     );
   }
 }

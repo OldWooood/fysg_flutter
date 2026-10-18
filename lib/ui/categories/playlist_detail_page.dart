@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -12,6 +10,7 @@ import '../../models/playlist.dart';
 import '../../models/song.dart';
 import '../../providers/player_provider.dart';
 import '../../utils/constants.dart';
+import '../../utils/paged_list_controller.dart';
 import '../../utils/toast_utils.dart';
 import '../common/error_view.dart';
 import '../common/mini_player.dart';
@@ -28,106 +27,41 @@ class PlaylistDetailPage extends ConsumerStatefulWidget {
 
 class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
   final ScrollController _scrollController = ScrollController();
-  List<Song> _songs = [];
-  int _currentPage = 0;
-  bool _isLoading = true;
-  bool _isLoadingMore = false;
-  bool _hasMore = true;
-  String? _errorMessage;
-  bool _loadMoreError = false;
+  late final PagedListController<Song> _songs;
 
   @override
   void initState() {
     super.initState();
-    _fetchInitialSongs();
+    _songs = PagedListController<Song>(
+      fetch: (page) => ref
+          .read(fysgServiceProvider)
+          .getCollectionSongsPaged(
+            widget.playlist.type,
+            widget.playlist.id,
+            page: page,
+          ),
+      onTransientError: (error) {
+        if (!mounted) return;
+        ToastUtils.showAppError(context, error);
+      },
+    );
+    _songs.refresh();
     _scrollController.addListener(_onScroll);
   }
 
   void _onScroll() {
-    if (!_scrollController.hasClients || _isLoadingMore || !_hasMore) return;
+    if (!_scrollController.hasClients) return;
     if (_scrollController.position.extentAfter >
         AppConstants.loadMoreTriggerExtent) {
       return;
     }
-    _loadMore();
-  }
-
-  Future<void> _fetchInitialSongs() async {
-    final service = ref.read(fysgServiceProvider);
-    final result = await service.getCollectionSongsPaged(
-      widget.playlist.type,
-      widget.playlist.id,
-      page: 0,
-    );
-
-    if (!mounted) return;
-
-    result.when(
-      ok: (paged) {
-        setState(() {
-          _songs = paged.items;
-          _isLoading = false;
-          _hasMore = paged.hasMore;
-        });
-      },
-      err: (error) {
-        setState(() {
-          _isLoading = false;
-          _errorMessage = error.message;
-        });
-      },
-    );
-  }
-
-  Future<void> _loadMore() async {
-    if (_isLoadingMore) return;
-    setState(() {
-      _isLoadingMore = true;
-      _loadMoreError = false;
-    });
-
-    final service = ref.read(fysgServiceProvider);
-    final nextPage = _currentPage + 1;
-    final result = await service.getCollectionSongsPaged(
-      widget.playlist.type,
-      widget.playlist.id,
-      page: nextPage,
-    );
-
-    if (!mounted) return;
-
-    result.when(
-      ok: (paged) {
-        setState(() {
-          _songs.addAll(paged.items);
-          _currentPage = nextPage;
-          _isLoadingMore = false;
-          _hasMore = paged.hasMore;
-        });
-      },
-      err: (_) {
-        setState(() {
-          _isLoadingMore = false;
-          _loadMoreError = true;
-        });
-        ToastUtils.showToast(context, AppLocalizations.of(context).loadFailed);
-      },
-    );
-  }
-
-  Future<void> _onRefresh() async {
-    setState(() {
-      _currentPage = 0;
-      _hasMore = true;
-      _loadMoreError = false;
-      _errorMessage = null;
-    });
-    await _fetchInitialSongs();
+    _songs.loadMore();
   }
 
   @override
   void dispose() {
     _scrollController.dispose();
+    _songs.dispose();
     super.dispose();
   }
 
@@ -142,198 +76,219 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
         child: Column(
           children: [
             Expanded(
-              child: RefreshIndicator(
-                onRefresh: _onRefresh,
-                child: CustomScrollView(
-                controller: _scrollController,
-                scrollCacheExtent: ScrollCacheExtent.pixels(
-                  AppConstants.listCacheExtent,
-                ),
-                slivers: [
-                  SliverAppBar(
-                    expandedHeight: 250,
-                    pinned: true,
-                    flexibleSpace: FlexibleSpaceBar(
-                      title: Text(
-                        widget.playlist.name,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          shadows: [
-                            Shadow(color: Colors.black, blurRadius: 10),
-                          ],
-                        ),
+              child: ListenableBuilder(
+                listenable: _songs,
+                builder: (context, _) {
+                  final songs = _songs.items;
+                  final error = _songs.error;
+                  return RefreshIndicator(
+                    onRefresh: _songs.refresh,
+                    child: CustomScrollView(
+                      controller: _scrollController,
+                      scrollCacheExtent: ScrollCacheExtent.pixels(
+                        AppConstants.listCacheExtent,
                       ),
-                      background: widget.playlist.cover != null
-                          ? Hero(
-                              tag:
-                                  'playlist-cover-${widget.playlist.type}-${widget.playlist.id}',
-                              child: CachedNetworkImage(
-                                imageUrl: widget.playlist.cover!,
-                                httpHeaders: ImageCacheService.headers,
-                                cacheManager: ImageCacheService.cacheManager,
-                                fit: BoxFit.cover,
-                                // 头图按显示尺寸解码，避免全分辨率 OOM
-                                memCacheWidth: 800,
-                                memCacheHeight: 500,
-                              ),
-                            )
-                          : ColoredBox(
-                              color: Theme.of(context).colorScheme.primary,
-                            ),
-                    ),
-                    actions: [
-                      favoriteAsync.when(
-                        data: (favorites) {
-                          final isFavorite = favorites.any(
-                            (p) =>
-                                p.id == widget.playlist.id &&
-                                p.type == widget.playlist.type,
-                          );
-                          return TextButton.icon(
-                            onPressed: () async {
-                              await ref
-                                  .read(favoritePlaylistServiceProvider)
-                                  .toggleFavorite(widget.playlist);
-                              ref.invalidate(favoritePlaylistsProvider);
-                            },
-                            icon: Icon(
-                              isFavorite
-                                  ? Icons.favorite
-                                  : Icons.favorite_border,
-                              color: Colors.white,
-                            ),
-                            label: Text(
-                              isFavorite
-                                  ? AppLocalizations.of(context).removeFavorite
-                                  : AppLocalizations.of(context).addFavorite,
-                              style: const TextStyle(color: Colors.white),
-                            ),
-                          );
-                        },
-                        loading: () => const SizedBox.shrink(),
-                        error: (_, _) => const SizedBox.shrink(),
-                      ),
-                    ],
-                  ),
-                  if (_errorMessage != null)
-                    SliverFillRemaining(
-                      child: ErrorView(
-                        message: _errorMessage!,
-                        onRetry: () {
-                          setState(() {
-                            _errorMessage = null;
-                            _isLoading = true;
-                          });
-                          _fetchInitialSongs();
-                        },
-                      ),
-                    )
-                  else if (!_isLoading && _songs.isEmpty)
-                    // 空歌单提示：之前是空白 + 100 高度占位，用户以为卡死
-                    SliverFillRemaining(
-                      hasScrollBody: false,
-                      child: RefreshIndicator(
-                        onRefresh: _onRefresh,
-                        child: ListView(
-                          children: [
-                            const SizedBox(height: 120),
-                            EmptyView(
-                              message: AppLocalizations.of(
-                                context,
-                              ).emptyPlaylist,
-                            ),
-                          ],
-                        ),
-                      ),
-                    )
-                  else if (!_isLoading && _songs.isNotEmpty)
-                    SliverToBoxAdapter(
-                      child: Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: ElevatedButton.icon(
-                          onPressed: () {
-                            ref
-                                .read(playerProvider.notifier)
-                                .logQueue(_songs, 0);
-                          },
-                          icon: const Icon(Icons.play_arrow),
-                          label: Text(
-                            AppLocalizations.of(context).playAll,
-                            style: const TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 18,
-                            ),
-                          ),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Theme.of(
-                              context,
-                            ).colorScheme.primary,
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  if (_isLoading)
-                    const SliverFillRemaining(
-                      child: Center(child: CircularProgressIndicator()),
-                    )
-                  else ...[
-                    SliverList(
-                      delegate: SliverChildBuilderDelegate(
-                        (context, index) {
-                          final song = _songs[index];
-                          final isPlaying = currentSongId == song.id;
-
-                          return SongListTile(
-                            key: ValueKey(song.id),
-                            song: song,
-                            leading: Text(
-                              '${index + 1}',
+                      slivers: [
+                        SliverAppBar(
+                          expandedHeight: 250,
+                          pinned: true,
+                          flexibleSpace: FlexibleSpaceBar(
+                            title: Text(
+                              widget.playlist.name,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
-                                color: Colors.grey,
-                                fontSize: 16,
+                                color: Colors.white,
+                                shadows: [
+                                  Shadow(color: Colors.black, blurRadius: 10),
+                                ],
                               ),
                             ),
-                            titleStyle: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              color: isPlaying
-                                  ? Theme.of(context).colorScheme.primary
-                                  : null,
+                            background: widget.playlist.cover != null
+                                ? Hero(
+                                    tag:
+                                        'playlist-cover-${widget.playlist.type}-${widget.playlist.id}',
+                                    child: CachedNetworkImage(
+                                      imageUrl: widget.playlist.cover!,
+                                      httpHeaders: ImageCacheService.headers,
+                                      cacheManager:
+                                          ImageCacheService.cacheManager,
+                                      fit: BoxFit.cover,
+                                      // 头图按显示尺寸解码，避免全分辨率 OOM
+                                      memCacheWidth: 800,
+                                      memCacheHeight: 500,
+                                    ),
+                                  )
+                                : ColoredBox(
+                                    color: Theme.of(
+                                      context,
+                                    ).colorScheme.primary,
+                                  ),
+                          ),
+                          actions: [
+                            favoriteAsync.when(
+                              data: (favorites) {
+                                final isFavorite = favorites.any(
+                                  (p) =>
+                                      p.id == widget.playlist.id &&
+                                      p.type == widget.playlist.type,
+                                );
+                                return TextButton.icon(
+                                  onPressed: () async {
+                                    await ref
+                                        .read(favoritePlaylistServiceProvider)
+                                        .toggleFavorite(widget.playlist);
+                                    ref.invalidate(favoritePlaylistsProvider);
+                                  },
+                                  icon: Icon(
+                                    isFavorite
+                                        ? Icons.favorite
+                                        : Icons.favorite_border,
+                                    color: Colors.white,
+                                  ),
+                                  label: Text(
+                                    isFavorite
+                                        ? AppLocalizations.of(
+                                            context,
+                                          ).removeFavorite
+                                        : AppLocalizations.of(
+                                            context,
+                                          ).addFavorite,
+                                    style: const TextStyle(color: Colors.white),
+                                  ),
+                                );
+                              },
+                              loading: () => const SizedBox.shrink(),
+                              error: (_, _) => const SizedBox.shrink(),
                             ),
-                            subtitleStyle: const TextStyle(fontSize: 12),
-                            trailing: const Icon(Icons.play_circle_outline),
-                            onTap: () {
-                              ref
-                                  .read(playerProvider.notifier)
-                                  .logQueue(_songs, index);
-                            },
-                          );
-                        },
-                        childCount: _songs.length,
-                        addAutomaticKeepAlives: false,
-                      ),
-                    ),
-                    if (_isLoadingMore)
-                      const SliverToBoxAdapter(
-                        child: Padding(
-                          padding: EdgeInsets.all(16),
-                          child: Center(child: CircularProgressIndicator()),
+                          ],
                         ),
-                      ),
-                    if (_loadMoreError)
-                      SliverToBoxAdapter(
-                        child: LoadMoreErrorFooter(onRetry: _loadMore),
-                      ),
-                    const SliverToBoxAdapter(child: SizedBox(height: 100)),
-                  ],
-                ],
-                ),
+                        if (error != null)
+                          SliverFillRemaining(
+                            child: ErrorView(
+                              message: ToastUtils.localizedAppError(
+                                context,
+                                error,
+                              ),
+                              onRetry: _songs.retry,
+                            ),
+                          )
+                        else if (!_songs.isLoading && songs.isEmpty)
+                          // 空歌单提示：之前是空白 + 100 高度占位，用户以为卡死
+                          SliverFillRemaining(
+                            hasScrollBody: false,
+                            child: RefreshIndicator(
+                              onRefresh: _songs.refresh,
+                              child: ListView(
+                                children: [
+                                  const SizedBox(height: 120),
+                                  EmptyView(
+                                    message: AppLocalizations.of(
+                                      context,
+                                    ).emptyPlaylist,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          )
+                        else if (!_songs.isLoading && songs.isNotEmpty)
+                          SliverToBoxAdapter(
+                            child: Padding(
+                              padding: const EdgeInsets.all(16),
+                              child: ElevatedButton.icon(
+                                onPressed: () {
+                                  ref
+                                      .read(playerProvider.notifier)
+                                      .logQueue(songs, 0);
+                                },
+                                icon: const Icon(Icons.play_arrow),
+                                label: Text(
+                                  AppLocalizations.of(context).playAll,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 18,
+                                  ),
+                                ),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Theme.of(
+                                    context,
+                                  ).colorScheme.primary,
+                                  foregroundColor: Colors.white,
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 12,
+                                  ),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        if (_songs.isLoading)
+                          const SliverFillRemaining(
+                            child: Center(child: CircularProgressIndicator()),
+                          )
+                        else ...[
+                          SliverList(
+                            delegate: SliverChildBuilderDelegate(
+                              (context, index) {
+                                final song = songs[index];
+                                final isPlaying = currentSongId == song.id;
+
+                                return SongListTile(
+                                  key: ValueKey(song.id),
+                                  song: song,
+                                  leading: Text(
+                                    '${index + 1}',
+                                    style: const TextStyle(
+                                      color: Colors.grey,
+                                      fontSize: 16,
+                                    ),
+                                  ),
+                                  titleStyle: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    color: isPlaying
+                                        ? Theme.of(context).colorScheme.primary
+                                        : null,
+                                  ),
+                                  subtitleStyle: const TextStyle(fontSize: 12),
+                                  trailing: const Icon(
+                                    Icons.play_circle_outline,
+                                  ),
+                                  onTap: () {
+                                    ref
+                                        .read(playerProvider.notifier)
+                                        .logQueue(songs, index);
+                                  },
+                                );
+                              },
+                              childCount: songs.length,
+                              addAutomaticKeepAlives: false,
+                            ),
+                          ),
+                          if (_songs.isLoadingMore)
+                            const SliverToBoxAdapter(
+                              child: Padding(
+                                padding: EdgeInsets.all(16),
+                                child: Center(
+                                  child: CircularProgressIndicator(),
+                                ),
+                              ),
+                            ),
+                          if (_songs.loadMoreError)
+                            SliverToBoxAdapter(
+                              child: LoadMoreErrorFooter(
+                                onRetry: _songs.loadMore,
+                              ),
+                            ),
+                          const SliverToBoxAdapter(
+                            child: SizedBox(height: 100),
+                          ),
+                        ],
+                      ],
+                    ),
+                  );
+                },
               ),
             ),
             const MiniPlayer(),

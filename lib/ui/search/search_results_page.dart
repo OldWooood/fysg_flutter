@@ -10,6 +10,7 @@ import '../../l10n/app_localizations.dart';
 import '../../models/song.dart';
 import '../../providers/player_provider.dart';
 import '../../utils/constants.dart';
+import '../../utils/paged_list_controller.dart';
 import '../../utils/toast_utils.dart';
 import '../common/error_view.dart';
 import '../common/mini_player.dart';
@@ -31,14 +32,8 @@ class _SearchResultsPageState extends ConsumerState<SearchResultsPage> {
   CancelToken? _suggestCancel;
   List<Map<String, dynamic>> _suggestions = [];
   bool _isLoadingSuggestions = false;
-  List<Song> _results = [];
-  int _currentPage = 0;
-  bool _isLoading = true;
-  bool _isLoadingMore = false;
-  bool _hasMore = false;
   late String _currentQuery;
-  String? _errorMessage;
-  bool _loadMoreError = false;
+  late PagedListController<Song> _results;
   int _suggestToken = 0;
 
   @override
@@ -47,8 +42,22 @@ class _SearchResultsPageState extends ConsumerState<SearchResultsPage> {
     _currentQuery = widget.query;
     _searchController.text = _currentQuery;
     _searchController.addListener(_onSearchChanged);
-    _performInitialSearch();
+    _results = _createResultsController();
+    _results.refresh();
     _scrollController.addListener(_onScroll);
+  }
+
+  PagedListController<Song> _createResultsController() {
+    return PagedListController<Song>(
+      fetch: (page) => ref
+          .read(fysgServiceProvider)
+          .searchSongsPaged(_currentQuery, page: page),
+      transform: _filterPlayable,
+      onTransientError: (error) {
+        if (!mounted) return;
+        ToastUtils.showAppError(context, error);
+      },
+    );
   }
 
   void _onSearchChanged() {
@@ -108,105 +117,15 @@ class _SearchResultsPageState extends ConsumerState<SearchResultsPage> {
   }
 
   void _onScroll() {
-    if (!_scrollController.hasClients || _isLoadingMore || !_hasMore) return;
+    if (!_scrollController.hasClients) return;
     if (_scrollController.position.extentAfter >
         AppConstants.loadMoreTriggerExtent) {
       return;
     }
-    _loadMore();
+    _results.loadMore();
   }
 
-  Future<void> _performInitialSearch() async {
-    setState(() {
-      _isLoading = true;
-      _errorMessage = null;
-    });
-    try {
-      final result = await ref
-          .read(fysgServiceProvider)
-          .searchSongsPaged(_currentQuery, page: 0);
-
-      if (!mounted) return;
-
-      result.when(
-        ok: (paged) {
-          final filtered = _filterPlayable(paged.items);
-          setState(() {
-            _results = filtered;
-            // 精确 hasMore：total 已知时不再靠 length 猜
-            _hasMore = paged.total >= 0
-                ? paged.hasMore
-                : paged.items.length >= AppConstants.defaultPageSize;
-            _isLoading = false;
-          });
-        },
-        err: (error) {
-          setState(() {
-            _errorMessage = error.message;
-            _isLoading = false;
-          });
-        },
-      );
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _errorMessage = e.toString();
-          _isLoading = false;
-        });
-      }
-    }
-  }
-
-  Future<void> _loadMore() async {
-    if (_isLoadingMore) return;
-    setState(() {
-      _isLoadingMore = true;
-      _loadMoreError = false;
-    });
-    final nextPage = _currentPage + 1;
-    try {
-      final result = await ref
-          .read(fysgServiceProvider)
-          .searchSongsPaged(_currentQuery, page: nextPage);
-
-      if (!mounted) return;
-
-      result.when(
-        ok: (paged) {
-          final filtered = _filterPlayable(paged.items);
-          setState(() {
-            _results.addAll(filtered);
-            _currentPage = nextPage;
-            _hasMore = paged.total >= 0
-                ? paged.hasMore
-                : paged.items.length >= AppConstants.defaultPageSize;
-            _isLoadingMore = false;
-          });
-        },
-        err: (_) {
-          setState(() {
-            _isLoadingMore = false;
-            _loadMoreError = true;
-          });
-          if (mounted) {
-            ToastUtils.showToast(
-              context,
-              AppLocalizations.of(context).loadFailed,
-            );
-          }
-        },
-      );
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _isLoadingMore = false;
-          _loadMoreError = true;
-        });
-      }
-    }
-  }
-
-  void _newSearch(String query) async {
+  Future<void> _newSearch(String query) async {
     final trimmed = query.trim();
     if (trimmed.isEmpty || trimmed == _currentQuery) return;
     FocusScope.of(context).unfocus();
@@ -216,15 +135,12 @@ class _SearchResultsPageState extends ConsumerState<SearchResultsPage> {
 
     setState(() {
       _currentQuery = trimmed;
-      _currentPage = 0;
-      _results = [];
-      _isLoading = true;
-      _errorMessage = null;
       _suggestions = [];
-      _loadMoreError = false;
+      _results.dispose();
+      _results = _createResultsController();
     });
     _searchController.text = trimmed;
-    _performInitialSearch();
+    _results.refresh();
   }
 
   @override
@@ -234,6 +150,7 @@ class _SearchResultsPageState extends ConsumerState<SearchResultsPage> {
     _scrollController.dispose();
     _debounce?.cancel();
     _suggestCancel?.cancel('dispose');
+    _results.dispose();
     super.dispose();
   }
 
@@ -302,68 +219,68 @@ class _SearchResultsPageState extends ConsumerState<SearchResultsPage> {
             Expanded(
               // 建议/结果切换只重建列表区，不碰 AppBar 与 MiniPlayer
               child: ListenableBuilder(
-                listenable: _searchController,
+                listenable: Listenable.merge([_searchController, _results]),
                 builder: (context, _) {
                   final showSuggestions =
                       _searchController.text.isNotEmpty &&
                       _searchController.text != _currentQuery;
                   if (showSuggestions) return _buildSuggestions();
-                  if (_isLoading) {
-                    return const Center(child: CircularProgressIndicator());
-                  }
-                  if (_errorMessage != null) {
-                    return ErrorView(
-                      message: _errorMessage!,
-                      onRetry: _performInitialSearch,
-                    );
-                  }
-                  if (_results.isEmpty) {
-                    return Center(
-                      child: Text(AppLocalizations.of(context).noResults),
-                    );
-                  }
-                  return RefreshIndicator(
-                    onRefresh: _performInitialSearch,
-                    child: ListView.builder(
-                      controller: _scrollController,
-                      scrollCacheExtent: ScrollCacheExtent.pixels(
-                        AppConstants.listCacheExtent,
-                      ),
-                      addAutomaticKeepAlives: false,
-                      itemCount:
-                          _results.length +
-                          ((_isLoadingMore || _loadMoreError) ? 1 : 0),
-                      itemBuilder: (context, index) {
-                        if (index == _results.length) {
-                          if (_loadMoreError) {
-                            return LoadMoreErrorFooter(onRetry: _loadMore);
-                          }
-                          return const Padding(
-                            padding: EdgeInsets.all(16),
-                            child: Center(
-                              child: CircularProgressIndicator(),
-                            ),
-                          );
-                        }
-                        final song = _results[index];
-                        return SongListTile(
-                          key: ValueKey(song.id),
-                          song: song,
-                          onTap: () {
-                            ref
-                                .read(playerProvider.notifier)
-                                .logQueue(_results, index);
-                          },
-                        );
-                      },
-                    ),
-                  );
+                  return _buildResults();
                 },
               ),
             ),
             const MiniPlayer(),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildResults() {
+    final results = _results.items;
+    if (_results.isLoading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    final error = _results.error;
+    if (error != null) {
+      return ErrorView(
+        message: ToastUtils.localizedAppError(context, error),
+        onRetry: _results.retry,
+      );
+    }
+    if (results.isEmpty) {
+      return Center(child: Text(AppLocalizations.of(context).noResults));
+    }
+    return RefreshIndicator(
+      onRefresh: _results.refresh,
+      child: ListView.builder(
+        controller: _scrollController,
+        scrollCacheExtent: ScrollCacheExtent.pixels(
+          AppConstants.listCacheExtent,
+        ),
+        addAutomaticKeepAlives: false,
+        itemCount:
+            results.length +
+            ((_results.isLoadingMore || _results.loadMoreError) ? 1 : 0),
+        itemBuilder: (context, index) {
+          if (index == results.length) {
+            if (_results.loadMoreError) {
+              return LoadMoreErrorFooter(onRetry: _results.loadMore);
+            }
+            return const Padding(
+              padding: EdgeInsets.all(16),
+              child: Center(child: CircularProgressIndicator()),
+            );
+          }
+          final song = results[index];
+          return SongListTile(
+            key: ValueKey(song.id),
+            song: song,
+            onTap: () {
+              ref.read(playerProvider.notifier).logQueue(results, index);
+            },
+          );
+        },
       ),
     );
   }
