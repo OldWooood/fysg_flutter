@@ -54,7 +54,7 @@ class _Semaphore {
 }
 
 class DownloadService {
-  late final Dio _dio;
+  final Dio _dio;
   final SharedPreferences _prefs;
   // 下载取消 + 并发控制：之前无 CancelToken、无上限，连续点多首打满带宽
   final Map<int, CancelToken> _activeTokens = {};
@@ -67,20 +67,25 @@ class DownloadService {
   // （之前每次播放都要 exists() 走一次 IO）
   final Set<int> _downloadedIds = {};
 
+  // 预取目录已知总字节数：null 表示未知（首次/删除后），需要扫描重建。
+  int? _prefetchKnownBytes;
+
   // 目录 Future 缓存：之前每次 getLocalFile 都走一次 platform channel
   Future<Directory>? _docDirFuture;
   Future<Directory>? _tmpDirFuture;
   Future<Directory>? _prefetchDirFuture;
 
-  DownloadService(this._prefs) {
-    _dio = Dio(
-      BaseOptions(
-        connectTimeout: AppConstants.downloadConnectTimeout,
-        receiveTimeout: AppConstants.downloadReceiveTimeout,
-        headers: AppConstants.defaultHeaders,
-      ),
-    );
-  }
+  /// [dio] 仅供测试注入；生产走内置配置（超时/请求头）。
+  DownloadService(this._prefs, {Dio? dio})
+    : _dio =
+          dio ??
+          Dio(
+            BaseOptions(
+              connectTimeout: AppConstants.downloadConnectTimeout,
+              receiveTimeout: AppConstants.downloadReceiveTimeout,
+              headers: AppConstants.defaultHeaders,
+            ),
+          );
 
   void dispose() {
     for (final token in _activeTokens.values) {
@@ -147,6 +152,8 @@ class DownloadService {
       await tempFile.delete();
     }
     await _removePrefetchIndex(songId);
+    // 删除后总量未知：下次 enforce 扫描重建一次，避免记账漂移
+    _prefetchKnownBytes = null;
   }
 
   /// 预取：与其他下载共享信号量槽位，支持取消，避免无上限并发打满带宽。
@@ -183,6 +190,11 @@ class DownloadService {
       }
       await tempFile.rename(finalFile.path);
       await _addPrefetchIndex(song.id);
+      // 记账：已知总量时增量累加，未知则留 null 让 enforce 扫描一次
+      final known = _prefetchKnownBytes;
+      if (known != null) {
+        _prefetchKnownBytes = known + await finalFile.length();
+      }
       await enforcePrefetchLimit();
     } catch (_) {
       if (await tempFile.exists()) {
@@ -202,8 +214,15 @@ class DownloadService {
   Future<void> enforcePrefetchLimit({
     int maxBytes = AppConstants.prefetchMaxBytes,
   }) async {
+    // 已知总量未超限时直接跳过：之前每次预取都全目录扫描 + N 次 stat。
+    final known = _prefetchKnownBytes;
+    if (known != null && known <= maxBytes) return;
+
     final dir = await _prefetchDir();
-    if (!await dir.exists()) return;
+    if (!await dir.exists()) {
+      _prefetchKnownBytes = 0;
+      return;
+    }
 
     final files = <File>[];
     await for (final entity in dir.list(followLinks: false)) {
@@ -211,7 +230,10 @@ class DownloadService {
         files.add(entity);
       }
     }
-    if (files.isEmpty) return;
+    if (files.isEmpty) {
+      _prefetchKnownBytes = 0;
+      return;
+    }
 
     final stats = <File, FileStat>{};
     var totalBytes = 0;
@@ -220,7 +242,10 @@ class DownloadService {
       stats[file] = stat;
       totalBytes += stat.size;
     }
-    if (totalBytes <= maxBytes) return;
+    if (totalBytes <= maxBytes) {
+      _prefetchKnownBytes = totalBytes;
+      return;
+    }
 
     files.sort((a, b) {
       final at = stats[a]?.modified.millisecondsSinceEpoch ?? 0;
@@ -246,6 +271,7 @@ class DownloadService {
         // ignore delete failures
       }
     }
+    _prefetchKnownBytes = totalBytes;
   }
 
   Future<Set<int>> listPrefetchedSongIds() async {
@@ -320,7 +346,11 @@ class DownloadService {
     CancelToken? cancelToken,
   }) async {
     Object? lastError;
-    for (var attempt = 0; attempt < AppConstants.downloadMaxRetries; attempt++) {
+    for (
+      var attempt = 0;
+      attempt < AppConstants.downloadMaxRetries;
+      attempt++
+    ) {
       try {
         await _dio.download(
           url,
@@ -384,12 +414,16 @@ class DownloadService {
     final List<String> downloaded =
         _prefs.getStringList(AppConstants.spDownloadedSongs) ?? [];
 
+    // 单次遍历：同时构建解析结果与「id -> 原始条目」映射（之前 decode 两遍）
     final parsed = <Song>[];
+    final rawById = <int, String>{};
     for (final item in downloaded) {
       final map = _safeDecodeManifest(item);
       if (map == null) continue;
       try {
-        parsed.add(Song.fromManifest(map));
+        final song = Song.fromManifest(map);
+        parsed.add(song);
+        rawById[song.id] = item;
       } catch (_) {
         continue;
       }
@@ -415,13 +449,6 @@ class DownloadService {
 
     final songs = <Song>[];
     final validFiles = <String>[];
-    final rawById = <int, String>{};
-    for (final item in downloaded) {
-      final map = _safeDecodeManifest(item);
-      final id = map?['id'];
-      final idInt = id is int ? id : int.tryParse('$id');
-      if (idInt != null) rawById[idInt] = item;
-    }
     for (final c in checks) {
       if (c.exists) {
         songs.add(c.song);

@@ -45,7 +45,11 @@ class FysgService {
     CancelToken? cancelToken,
   }) async {
     Object? lastError;
-    for (var attempt = 0; attempt <= AppConstants.networkMaxRetries; attempt++) {
+    for (
+      var attempt = 0;
+      attempt <= AppConstants.networkMaxRetries;
+      attempt++
+    ) {
       try {
         final response = await _dio.get<dynamic>(
           path,
@@ -338,13 +342,19 @@ class FysgService {
       return [];
     } on AppError {
       rethrow;
+    } on DioException catch (e) {
+      // 取消语义原样透传：上层 Result 会映射成 'cancelled'，
+      // 之前统一包成网络失败导致 UI 的取消分支永远命中不了。
+      if (e.type == DioExceptionType.cancel) rethrow;
+      AppLog.d('Error fetching suggestions: $e');
+      throw AppError.network('获取搜索建议失败');
     } catch (e) {
       AppLog.d('Error fetching suggestions: $e');
       throw AppError.network('获取搜索建议失败');
     }
   }
 
-  /// 搜索歌曲（分页版，携带 total；旧方法委托于此保持兼容）
+  /// 搜索歌曲（分页版，携带 total）
   Future<Result<PagedList<Song>, AppError>> searchSongsPaged(
     String query, {
     int page = AppConstants.defaultPage,
@@ -388,19 +398,6 @@ class FysgService {
     } finally {
       _searchSongsInFlight.remove(cacheKey);
     }
-  }
-
-  /// 搜索歌曲
-  Future<Result<List<Song>, AppError>> searchSongs(
-    String query, {
-    int page = AppConstants.defaultPage,
-    int size = AppConstants.defaultPageSize,
-  }) async {
-    final result = await searchSongsPaged(query, page: page, size: size);
-    return result.when(
-      ok: (paged) => Result.ok(List<Song>.from(paged.items)),
-      err: (e) => Result.err(e),
-    );
   }
 
   Future<PagedList<Song>> _fetchSearchSongs(
@@ -485,18 +482,6 @@ class FysgService {
     } finally {
       _recommendedSongsInFlight.remove(cacheKey);
     }
-  }
-
-  /// 获取推荐歌曲
-  Future<Result<List<Song>, AppError>> getRecommendedSongs({
-    int page = AppConstants.defaultPage,
-    int size = AppConstants.defaultPageSize,
-  }) async {
-    final result = await getRecommendedSongsPaged(page: page, size: size);
-    return result.when(
-      ok: (paged) => Result.ok(List<Song>.from(paged.items)),
-      err: (e) => Result.err(e),
-    );
   }
 
   Future<PagedList<Song>> _fetchRecommendedSongs(int page, int size) async {
@@ -674,15 +659,9 @@ class FysgService {
       if (jsonResponse['code'] == 0 && jsonResponse['data'] != null) {
         final data = jsonResponse['data'];
         if (data is Map && data['list'] != null) {
-          final items = (data['list'] as List)
-              .whereType<Map>()
-              .map((item) {
-                return Playlist.fromJson(
-                  Map<String, dynamic>.from(item),
-                  type,
-                );
-              })
-              .toList();
+          final items = (data['list'] as List).whereType<Map>().map((item) {
+            return Playlist.fromJson(Map<String, dynamic>.from(item), type);
+          }).toList();
           return PagedList(
             items: items,
             total: _extractCount(data),
@@ -698,43 +677,6 @@ class FysgService {
       AppLog.d('Error fetching collection $endpoint: $e');
       throw AppError.unknown(e);
     }
-  }
-
-  Future<Result<List<Playlist>, AppError>> _fetchCollection(
-    String endpoint, {
-    int page = AppConstants.defaultPage,
-    int size = AppConstants.defaultPageSize,
-    String type = 'playlist',
-  }) async {
-    final result = await _fetchCollectionPaged(
-      endpoint,
-      page: page,
-      size: size,
-      type: type,
-    );
-    return result.when(
-      ok: (paged) => Result.ok(List<Playlist>.from(paged.items)),
-      err: (e) => Result.err(e),
-    );
-  }
-
-  Future<Result<List<Playlist>, AppError>> getPlaylists({
-    int page = AppConstants.defaultPage,
-    int size = AppConstants.defaultPageSize,
-  }) async {
-    return _fetchCollection(
-      'playlists',
-      page: page,
-      size: size,
-      type: 'playlist',
-    );
-  }
-
-  Future<Result<List<Playlist>, AppError>> getAlbums({
-    int page = AppConstants.defaultPage,
-    int size = AppConstants.defaultPageSize,
-  }) async {
-    return _fetchCollection('albums', page: page, size: size, type: 'album');
   }
 
   Future<Result<PagedList<Playlist>, AppError>> getPlaylistsPaged({
@@ -852,24 +794,6 @@ class FysgService {
       AppLog.d('Error fetching collection songs: $e');
       throw AppError.unknown(e);
     }
-  }
-
-  Future<Result<List<Song>, AppError>> getCollectionSongs(
-    String type,
-    int id, {
-    int page = AppConstants.defaultPage,
-    int size = AppConstants.defaultPageSize,
-  }) async {
-    final result = await getCollectionSongsPaged(
-      type,
-      id,
-      page: page,
-      size: size,
-    );
-    return result.when(
-      ok: (paged) => Result.ok(List<Song>.from(paged.items)),
-      err: (e) => Result.err(e),
-    );
   }
 }
 
