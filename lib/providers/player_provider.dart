@@ -5,15 +5,12 @@ import 'package:just_audio/just_audio.dart';
 
 import '../api/download_service.dart';
 import '../api/fysg_service.dart';
-import '../api/recently_played_service.dart'
-    show
-        recentlyPlayedServiceProvider,
-        recentSongsProvider,
-        RecentlyPlayedService;
+import '../api/recently_played_service.dart' show recentSongsProvider;
 import '../audio/app_audio_handler.dart';
 import '../models/song.dart';
 import '../utils/app_log.dart';
 import '../utils/constants.dart';
+import '../utils/lru_cache.dart';
 import 'prefetch_manager.dart';
 import 'queue_expander.dart';
 import 'queue_persistence.dart';
@@ -107,8 +104,10 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
   final AudioPlayer _audioPlayer = AudioPlayer();
   late final FysgService _service;
   late final DownloadService _downloadService;
-  late final RecentlyPlayedService _recentService;
-  final Map<int, Song> _songDetailsCache = {};
+  // 有界 LRU（之前只重排不淘汰，长会话无界增长）；与 QueueExpander 共享引用
+  final LruCache<int, Song> _songDetailsCache = LruCache<int, Song>(
+    maxEntries: AppConstants.songDetailsCacheMaxEntries,
+  );
   final Set<int> _songDetailsLoading = {};
   int _queueBuildToken = 0;
   bool _suppressIndexSync = false;
@@ -144,7 +143,6 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
   FysgPlayerState build() {
     _service = ref.watch(fysgServiceProvider);
     _downloadService = ref.watch(downloadServiceProvider);
-    _recentService = ref.watch(recentlyPlayedServiceProvider);
     _persistence = QueuePersistence(ref);
     _expander = QueueExpander(
       service: _service,
@@ -162,7 +160,6 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
       // 防止静态单例持有已释放对象。
       ref.onDispose(() {
         _isDisposed = true;
-        _recentService.dispose();
         for (final subscription in _subscriptions) {
           unawaited(subscription.cancel());
         }
@@ -241,8 +238,7 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
           if (!_mounted || state.position == position) return;
           // position state 节流到 500ms：秒级 UI 足够，高频 copyWith 只增 GC
           final now = DateTime.now();
-          final secondChanged =
-              position.inSeconds != state.position.inSeconds;
+          final secondChanged = position.inSeconds != state.position.inSeconds;
           if (!secondChanged &&
               now.difference(_lastPositionStateUpdate) <
                   AppConstants.positionStateMinInterval) {
@@ -561,8 +557,7 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
     if (song == null) return;
     if (_lastHistorySongId == song.id) return;
     _lastHistorySongId = song.id;
-    _recentService.addSong(song);
-    ref.invalidate(recentSongsProvider);
+    ref.read(recentSongsProvider.notifier).add(song);
   }
 
   Future<void> restoreCachedQueue() async {
@@ -792,11 +787,8 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
     if (baseSong == null) return;
     if ((baseSong.lyrics?.isNotEmpty ?? false)) return;
 
-    final cached = _songDetailsCache[songId];
+    final cached = _songDetailsCache.get(songId);
     if (cached != null) {
-      // 刷新 expander 共享缓存的 LRU 顺序
-      _songDetailsCache.remove(songId);
-      _songDetailsCache[songId] = cached;
       _mergeSongDetailsIntoState(cached);
       return;
     }
@@ -806,7 +798,7 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
     final result = await _service.getSongDetails(songId);
     result.when(
       ok: (details) {
-        _songDetailsCache[songId] = details;
+        _songDetailsCache.put(songId, details);
         _mergeSongDetailsIntoState(details);
       },
       err: (error) {

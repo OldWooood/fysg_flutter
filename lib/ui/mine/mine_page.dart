@@ -118,37 +118,28 @@ class _MinePageState extends ConsumerState<MinePage>
 class _RecentList extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final recentAsync = ref.watch(recentSongsProvider);
+    final songs = ref.watch(recentSongsProvider);
 
-    return recentAsync.when(
-      data: (songs) {
-        if (songs.isEmpty) {
-          return Center(child: Text(AppLocalizations.of(context).noHistory));
-        }
-        return RefreshIndicator(
-          onRefresh: () async {
-            ref.invalidate(recentSongsProvider);
-          },
-          child: ListView.builder(
-            addAutomaticKeepAlives: false,
-            itemCount: songs.length,
-            itemBuilder: (context, index) {
-              final song = songs[index];
-              return SongListTile(
-                key: ValueKey(song.id),
-                song: song,
-                fallbackIcon: Icons.music_note,
-                onTap: () =>
-                    ref.read(playerProvider.notifier).logQueue(songs, index),
-              );
-            },
-          ),
-        );
+    if (songs.isEmpty) {
+      return Center(child: Text(AppLocalizations.of(context).noHistory));
+    }
+    return RefreshIndicator(
+      onRefresh: () async {
+        ref.invalidate(recentSongsProvider);
       },
-      loading: () => const Center(child: CircularProgressIndicator()),
-      error: (e, s) => ErrorView(
-        message: AppLocalizations.of(context).loadFailed,
-        onRetry: () => ref.invalidate(recentSongsProvider),
+      child: ListView.builder(
+        addAutomaticKeepAlives: false,
+        itemCount: songs.length,
+        itemBuilder: (context, index) {
+          final song = songs[index];
+          return SongListTile(
+            key: ValueKey(song.id),
+            song: song,
+            fallbackIcon: Icons.music_note,
+            onTap: () =>
+                ref.read(playerProvider.notifier).logQueue(songs, index),
+          );
+        },
       ),
     );
   }

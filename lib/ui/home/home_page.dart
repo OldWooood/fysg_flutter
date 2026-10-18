@@ -211,91 +211,83 @@ class _RecentSection extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final recentAsync = ref.watch(recentSongsProvider);
+    final songs = ref.watch(recentSongsProvider);
+    if (songs.isEmpty) {
+      return const SliverToBoxAdapter(child: SizedBox.shrink());
+    }
     return SliverToBoxAdapter(
-      child: recentAsync.when(
-        data: (songs) {
-          if (songs.isEmpty) return const SizedBox.shrink();
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 20,
-                  vertical: 10,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  AppLocalizations.of(context).recentlyPlayed,
+                  style: Theme.of(context).textTheme.headlineSmall,
                 ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      AppLocalizations.of(context).recentlyPlayed,
-                      style: Theme.of(context).textTheme.headlineSmall,
-                    ),
-                    TextButton(
-                      onPressed: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => const RecentlyPlayedPage(),
-                          ),
-                        );
-                      },
-                      child: Text(AppLocalizations.of(context).seeAll),
-                    ),
-                  ],
-                ),
-              ),
-              SizedBox(
-                height: 180,
-                child: ListView.builder(
-                  scrollDirection: Axis.horizontal,
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  itemCount: songs.length,
-                  itemBuilder: (context, index) {
-                    final song = songs[index];
-                    return GestureDetector(
-                      onTap: () => ref
-                          .read(playerProvider.notifier)
-                          .logQueue(songs, index),
-                      child: Container(
-                        width: 120,
-                        margin: const EdgeInsets.only(right: 15),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            AspectRatio(
-                              aspectRatio: 1,
-                              child: ClipRRect(
-                                borderRadius: BorderRadius.circular(8),
-                                child: SongCover(
-                                  imageUrl: song.cover,
-                                  fit: BoxFit.cover,
-                                  memCacheWidth: 240,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(height: 5),
-                            Text(
-                              song.name,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 13,
-                              ),
-                            ),
-                          ],
-                        ),
+                TextButton(
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const RecentlyPlayedPage(),
                       ),
                     );
                   },
+                  child: Text(AppLocalizations.of(context).seeAll),
                 ),
-              ),
-            ],
-          );
-        },
-        loading: () => const SizedBox.shrink(),
-        error: (e, s) => const SizedBox.shrink(),
+              ],
+            ),
+          ),
+          SizedBox(
+            height: 180,
+            child: ListView.builder(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              itemCount: songs.length,
+              itemBuilder: (context, index) {
+                final song = songs[index];
+                return GestureDetector(
+                  onTap: () =>
+                      ref.read(playerProvider.notifier).logQueue(songs, index),
+                  child: Container(
+                    width: 120,
+                    margin: const EdgeInsets.only(right: 15),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        AspectRatio(
+                          aspectRatio: 1,
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(8),
+                            child: SongCover(
+                              imageUrl: song.cover,
+                              fit: BoxFit.cover,
+                              memCacheWidth: 240,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 5),
+                        Text(
+                          song.name,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
       ),
     );
   }

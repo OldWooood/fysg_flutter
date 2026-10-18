@@ -11,7 +11,7 @@ class RecentlyPlayedPage extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final recentAsync = ref.watch(recentSongsProvider);
+    final songs = ref.watch(recentSongsProvider);
 
     return Scaffold(
       appBar: AppBar(title: Text(AppLocalizations.of(context).recentlyPlayed)),
@@ -19,36 +19,25 @@ class RecentlyPlayedPage extends ConsumerWidget {
         child: Column(
           children: [
             Expanded(
-              child: recentAsync.when(
-                data: (songs) {
-                  if (songs.isEmpty) {
-                    return Center(
-                      child: Text(AppLocalizations.of(context).noHistory),
-                    );
-                  }
-                  return ListView.builder(
-                    addAutomaticKeepAlives: false,
-                    itemCount: songs.length,
-                    itemBuilder: (context, index) {
-                      final song = songs[index];
-                      return SongListTile(
-                        key: ValueKey(song.id),
-                        song: song,
-                        fallbackIcon: Icons.music_note,
-                        onTap: () {
-                          ref
-                              .read(playerProvider.notifier)
-                              .logQueue(songs, index);
-                        },
-                      );
-                    },
-                  );
-                },
-                loading: () => const Center(child: CircularProgressIndicator()),
-                error: (e, s) => Center(
-                  child: Text(AppLocalizations.of(context).loadFailed),
-                ),
-              ),
+              child: songs.isEmpty
+                  ? Center(child: Text(AppLocalizations.of(context).noHistory))
+                  : ListView.builder(
+                      addAutomaticKeepAlives: false,
+                      itemCount: songs.length,
+                      itemBuilder: (context, index) {
+                        final song = songs[index];
+                        return SongListTile(
+                          key: ValueKey(song.id),
+                          song: song,
+                          fallbackIcon: Icons.music_note,
+                          onTap: () {
+                            ref
+                                .read(playerProvider.notifier)
+                                .logQueue(songs, index);
+                          },
+                        );
+                      },
+                    ),
             ),
             const MiniPlayer(),
           ],
