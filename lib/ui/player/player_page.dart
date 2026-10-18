@@ -17,20 +17,22 @@ import '../common/song_cover.dart';
 import 'playlist_bottom_sheet.dart';
 
 /// 歌词解析缓存：按 songId 缓存，避免之前以整段 LRC 字符串做 family key
-///（大 key 复制 + 内存翻倍），解析结果随详情合并自动刷新。
-final _lyricsCacheProvider = Provider.family<List<LyricLine>, int>(
-  (ref, songId) {
-    final current = ref.watch(playerProvider.select((s) => s.currentSong));
-    if (current != null && current.id == songId) {
-      return parseLyrics(current.lyrics);
-    }
-    final queue = ref.watch(playerProvider.select((s) => s.queue));
-    for (final song in queue) {
-      if (song.id == songId) return parseLyrics(song.lyrics);
-    }
-    return const <LyricLine>[];
-  },
-);
+///（大 key 复制 + 内存翻倍），也避免 provider 重建时重复正则解析；
+/// 解析结果随详情合并（歌词内容变化）自动刷新。
+final _lyricsCacheProvider = Provider.family<List<LyricLine>, int>((
+  ref,
+  songId,
+) {
+  final current = ref.watch(playerProvider.select((s) => s.currentSong));
+  if (current != null && current.id == songId) {
+    return parseLyricsCached(songId, current.lyrics);
+  }
+  final queue = ref.watch(playerProvider.select((s) => s.queue));
+  for (final song in queue) {
+    if (song.id == songId) return parseLyricsCached(songId, song.lyrics);
+  }
+  return const <LyricLine>[];
+});
 
 /// 系统字体缩放因子（钳制 0.8~1.6，防超大字体撑爆布局）。
 double _textScaleFactor(BuildContext context) =>
@@ -47,12 +49,15 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     with SingleTickerProviderStateMixin {
   late final TabController _tabController;
   bool _lyricsTabActive = false;
+  bool _wakelockOn = false;
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
     _tabController.addListener(_onTabChanged);
+    // 播放中进入播放页也要立即常亮（ref.listen 默认不触发初始值）
+    _syncWakelock(ref.read(playerProvider.select((s) => s.isPlaying)));
     // 打开播放页时补齐当前歌曲详情（歌词等）
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -68,8 +73,22 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     setState(() => _lyricsTabActive = _tabController.index == 1);
   }
 
+  /// 只在「播放页可见且正在播放」时常亮。
+  /// 之前只在状态变化时 enable，且退出页面不复位：进入页面时已在播放不会常亮，
+  /// 离开页面后屏幕却一直常亮耗电。
+  void _syncWakelock(bool isPlaying) {
+    if (_wakelockOn == isPlaying) return;
+    _wakelockOn = isPlaying;
+    if (isPlaying) {
+      WakelockPlus.enable();
+    } else {
+      WakelockPlus.disable();
+    }
+  }
+
   @override
   void dispose() {
+    _syncWakelock(false);
     _tabController.removeListener(_onTabChanged);
     _tabController.dispose();
     super.dispose();
@@ -82,15 +101,11 @@ class _PlayerPageState extends ConsumerState<PlayerPage>
     final lyrics = songId == null
         ? const <LyricLine>[]
         : ref.watch(_lyricsCacheProvider(songId));
-    // 息屏跟随播放状态：之前进页面 enable、出页面 disable，
-    // 后台仍在播也会被关掉。现只在播放时保持常亮。
-    ref.listen(playerProvider.select((s) => s.isPlaying), (_, isPlaying) {
-      if (isPlaying) {
-        WakelockPlus.enable();
-      } else {
-        WakelockPlus.disable();
-      }
-    });
+    // 息屏跟随播放状态，退出页面/暂停即复位（见 _syncWakelock）
+    ref.listen(
+      playerProvider.select((s) => s.isPlaying),
+      (_, isPlaying) => _syncWakelock(isPlaying),
+    );
 
     if (song == null) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
@@ -480,36 +495,38 @@ class _LyricsViewState extends ConsumerState<_LyricsView>
             return false;
           },
           child: ScrollablePositionedList.builder(
-        itemScrollController: _itemScrollController,
-        itemPositionsListener: _itemPositionsListener,
-        itemCount: widget.lyrics.length,
-        // Increased top padding to avoid overlap with AppBar/TabBar
-        padding: EdgeInsets.fromLTRB(
-          20,
-          kToolbarHeight + 20,
-          20,
-          MediaQuery.paddingOf(context).bottom + 40,
-        ),
-        itemBuilder: (context, index) {
-          final isCurrent = index == currentIndex;
-          return Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            child: Center(
-              child: Semantics(
-                selected: isCurrent,
-                child: Text(
-                  widget.lyrics[index].text,
-                  style: TextStyle(
-                    color: isCurrent ? onSurface : onSurfaceDim,
-                    fontSize: (isCurrent ? 24 : 18) * textScaleFactor,
-                    fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-              ),
+            itemScrollController: _itemScrollController,
+            itemPositionsListener: _itemPositionsListener,
+            itemCount: widget.lyrics.length,
+            // Increased top padding to avoid overlap with AppBar/TabBar
+            padding: EdgeInsets.fromLTRB(
+              20,
+              kToolbarHeight + 20,
+              20,
+              MediaQuery.paddingOf(context).bottom + 40,
             ),
-          );
-        },
+            itemBuilder: (context, index) {
+              final isCurrent = index == currentIndex;
+              return Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Center(
+                  child: Semantics(
+                    selected: isCurrent,
+                    child: Text(
+                      widget.lyrics[index].text,
+                      style: TextStyle(
+                        color: isCurrent ? onSurface : onSurfaceDim,
+                        fontSize: (isCurrent ? 24 : 18) * textScaleFactor,
+                        fontWeight: isCurrent
+                            ? FontWeight.bold
+                            : FontWeight.normal,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                ),
+              );
+            },
           ),
         ),
       ),
@@ -577,10 +594,7 @@ class _ControlsSection extends ConsumerWidget {
           ),
         ),
         Container(
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: onSurface,
-          ),
+          decoration: BoxDecoration(shape: BoxShape.circle, color: onSurface),
           child: Semantics(
             button: true,
             label: isPlaying
@@ -629,9 +643,8 @@ class _ControlsSection extends ConsumerWidget {
       ToastUtils.showError(context, l10n.downloadFailed);
       return;
     }
-    // 已以后台启动（quick == started），再用进度框做二次确认展示：
-    // 为避免重复下载，这里仅提示；真正的进度展示走 Mine/通知。
-    // 若需要精确进度，可在 downloadCurrentSong(onProgress:) 基础上接 LinearProgressIndicator。
+    // 已以后台启动（quick == started）：进度展示走通知栏/下载列表，
+    // 这里只提示已开始，避免重复弹进度框。
     ToastUtils.showToast(context, l10n.downloadStarted);
   }
 

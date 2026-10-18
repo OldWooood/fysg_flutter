@@ -49,6 +49,36 @@ void main() {
     });
   });
 
+  group('parseLyricsCached', () {
+    tearDown(clearLyricsCache);
+
+    test('相同内容命中缓存返回同一实例', () {
+      final first = parseLyricsCached(1, '[00:01.00]a');
+      final second = parseLyricsCached(1, '[00:01.00]a');
+      expect(identical(first, second), isTrue);
+      expect(second.single.text, 'a');
+    });
+
+    test('歌词内容变化自动重算', () {
+      final first = parseLyricsCached(2, '[00:01.00]a');
+      final second = parseLyricsCached(2, '[00:02.00]b');
+      expect(identical(first, second), isFalse);
+      expect(second.single.text, 'b');
+      expect(second.single.offset, const Duration(seconds: 2));
+    });
+
+    test('缓存有界：超过上限后最旧条目被淘汰', () {
+      final original = parseLyricsCached(0, '[00:01.00]line0');
+      for (var i = 1; i <= 35; i++) {
+        parseLyricsCached(i, '[00:01.00]line$i');
+      }
+      final reparsed = parseLyricsCached(0, '[00:01.00]line0');
+      // 已淘汰 → 重新解析出新的实例
+      expect(identical(original, reparsed), isFalse);
+      expect(reparsed.single.text, 'line0');
+    });
+  });
+
   group('findCurrentLyricIndex', () {
     final lyrics = parseLyrics('[00:10.00]a\n[00:20.00]b\n[00:30.00]c');
 
