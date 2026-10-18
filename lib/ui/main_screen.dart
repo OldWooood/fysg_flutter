@@ -20,6 +20,10 @@ class _MainScreenState extends ConsumerState<MainScreen>
     with WidgetsBindingObserver {
   int _currentIndex = 0;
 
+  // IndexedStack 会立即 initState 全部子页：之前「分类/我的」的请求在启动时
+  // 就发出去（用户可能从不打开）。首次切到该 Tab 才真正构建。
+  final Set<int> _activatedIndexes = {0};
+
   final List<Widget> _pages = const [
     HomePage(),
     CategoriesPage(),
@@ -55,8 +59,7 @@ class _MainScreenState extends ConsumerState<MainScreen>
   Widget build(BuildContext context) {
     // 无 AppBar 的 tab（首页）没有样式来源，在此按主题指定状态栏图标亮度；
     // 有 AppBar 的页走 AppBarTheme.systemOverlayStyle
-    final overlayStyle =
-        Theme.of(context).brightness == Brightness.dark
+    final overlayStyle = Theme.of(context).brightness == Brightness.dark
         ? SystemUiOverlayStyle.light.copyWith(
             statusBarColor: Colors.transparent,
           )
@@ -72,7 +75,16 @@ class _MainScreenState extends ConsumerState<MainScreen>
           child: Column(
             children: [
               Expanded(
-                child: IndexedStack(index: _currentIndex, children: _pages),
+                child: IndexedStack(
+                  index: _currentIndex,
+                  children: [
+                    for (var i = 0; i < _pages.length; i++)
+                      if (_activatedIndexes.contains(i))
+                        _pages[i]
+                      else
+                        const SizedBox.shrink(),
+                  ],
+                ),
               ),
               // 全局唯一的 MiniPlayer，避免四个 Tab 各持一份
               const MiniPlayer(),
@@ -87,6 +99,7 @@ class _MainScreenState extends ConsumerState<MainScreen>
           onDestinationSelected: (index) {
             setState(() {
               _currentIndex = index;
+              _activatedIndexes.add(index);
             });
           },
           destinations: [

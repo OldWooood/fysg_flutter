@@ -26,44 +26,60 @@ Future<void> bootAndRun() async {
   // 后台并行初始化，任一失败都允许降级进入只读浏览模式。
   runApp(const _BootSplash());
 
+  final errors = <String>[];
   SharedPreferences? prefs;
-  String? bootError;
   try {
-    final loaded = await SharedPreferences.getInstance()
-        .timeout(const Duration(seconds: 5));
+    final loaded = await SharedPreferences.getInstance().timeout(
+      const Duration(seconds: 5),
+    );
     prefs = loaded;
     // 冷启动先用上次的资源域名，随后后台刷新（CDN 迁移后自动跟随）。
     AssetConfig.loadFromPrefs(loaded);
-    try {
-      final service = FysgService();
-      try {
-        await service.fetchAssetDomains().timeout(const Duration(seconds: 8));
-        await AssetConfig.saveToPrefs(loaded);
-      } finally {
-        service.dispose();
-      }
-    } catch (e) {
-      AppLog.d('Boot asset domains refresh failed: $e');
-    }
   } catch (e) {
     AppLog.d('Boot prefs failed (degraded mode): $e');
-    bootError = '$e';
+    errors.add('$e');
   }
-  try {
-    await AppAudioService.init().timeout(const Duration(seconds: 8));
-  } catch (e) {
-    AppLog.d('Boot audio failed (degraded mode): $e');
-    bootError = [bootError, '$e'].whereType<String>().join('; ');
-  }
+
+  // 资源域名刷新与音频初始化互不依赖：并行执行，
+  // 最坏等待从 5+8+8s 串行降到首段 + 8s。
+  await Future.wait([
+    _initAudio(errors),
+    if (prefs != null) _refreshAssetDomains(prefs),
+  ]);
 
   runApp(
     ProviderScope(
       overrides: [
         if (prefs != null) sharedPreferencesProvider.overrideWithValue(prefs),
       ],
-      child: MyApp(hasPrefs: prefs != null, bootError: bootError),
+      child: MyApp(
+        hasPrefs: prefs != null,
+        bootError: errors.isEmpty ? null : errors.join('; '),
+      ),
     ),
   );
+}
+
+Future<void> _initAudio(List<String> errors) async {
+  try {
+    await AppAudioService.init().timeout(const Duration(seconds: 8));
+  } catch (e) {
+    AppLog.d('Boot audio failed (degraded mode): $e');
+    errors.add('$e');
+  }
+}
+
+/// 域名刷新失败不算致命（沿用上次域名/内置兜底），只记日志。
+Future<void> _refreshAssetDomains(SharedPreferences prefs) async {
+  final service = FysgService();
+  try {
+    await service.fetchAssetDomains().timeout(const Duration(seconds: 8));
+    await AssetConfig.saveToPrefs(prefs);
+  } catch (e) {
+    AppLog.d('Boot asset domains refresh failed: $e');
+  } finally {
+    service.dispose();
+  }
 }
 
 class _BootSplash extends StatelessWidget {
