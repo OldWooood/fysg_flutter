@@ -67,9 +67,6 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
 
   @override
   Widget build(BuildContext context) {
-    final currentSongId = ref.watch(
-      playerProvider.select((s) => s.currentSong?.id),
-    );
     final favoriteAsync = ref.watch(favoritePlaylistsProvider);
     return Scaffold(
       body: SafeArea(
@@ -85,6 +82,7 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
                     onRefresh: _songs.refresh,
                     child: CustomScrollView(
                       controller: _scrollController,
+                      physics: const AlwaysScrollableScrollPhysics(),
                       scrollCacheExtent: ScrollCacheExtent.pixels(
                         AppConstants.listCacheExtent,
                       ),
@@ -174,21 +172,13 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
                             ),
                           )
                         else if (!_songs.isLoading && songs.isEmpty)
-                          // 空歌单提示：之前是空白 + 100 高度占位，用户以为卡死
+                          // 空歌单提示：复用外层 CustomScrollView + RefreshIndicator，避免双层嵌套滚动冲突
                           SliverFillRemaining(
                             hasScrollBody: false,
-                            child: RefreshIndicator(
-                              onRefresh: _songs.refresh,
-                              child: ListView(
-                                children: [
-                                  const SizedBox(height: 120),
-                                  EmptyView(
-                                    message: AppLocalizations.of(
-                                      context,
-                                    ).emptyPlaylist,
-                                  ),
-                                ],
-                              ),
+                            child: EmptyView(
+                              message: AppLocalizations.of(
+                                context,
+                              ).emptyPlaylist,
                             ),
                           )
                         else if (!_songs.isLoading && songs.isNotEmpty)
@@ -233,7 +223,6 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
                             delegate: SliverChildBuilderDelegate(
                               (context, index) {
                                 final song = songs[index];
-                                final isPlaying = currentSongId == song.id;
 
                                 return SongListTile(
                                   key: ValueKey(song.id),
@@ -245,16 +234,10 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
                                       fontSize: 16,
                                     ),
                                   ),
-                                  titleStyle: TextStyle(
+                                  titleStyle: const TextStyle(
                                     fontWeight: FontWeight.bold,
-                                    color: isPlaying
-                                        ? Theme.of(context).colorScheme.primary
-                                        : null,
                                   ),
                                   subtitleStyle: const TextStyle(fontSize: 12),
-                                  trailing: const Icon(
-                                    Icons.play_circle_outline,
-                                  ),
                                   onTap: () {
                                     ref
                                         .read(playerProvider.notifier)

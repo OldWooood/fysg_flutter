@@ -288,8 +288,9 @@ class _FavoritePlaylistTile extends ConsumerWidget {
   }
 
   Widget? _playlistCountSubtitle(BuildContext context, int? count) {
-    if (count == null) return null;
-    // 之前裸数字无单位，补本地化
-    return Text('$count ${AppLocalizations.of(context).playlists}');
+    final l10n = AppLocalizations.of(context);
+    final typeLabel = playlist.type == 'album' ? l10n.albums : l10n.playlists;
+    if (count == null) return Text(typeLabel);
+    return Text('$typeLabel · ${l10n.songCount(count)}');
   }
 }

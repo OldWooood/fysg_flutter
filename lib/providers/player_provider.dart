@@ -79,6 +79,7 @@ class FysgPlayerState {
   FysgPlayerState copyWith({
     bool? isPlaying,
     Song? currentSong,
+    bool clearCurrentSong = false,
     Duration? position,
     Duration? duration,
     List<Song>? queue,
@@ -88,7 +89,7 @@ class FysgPlayerState {
   }) {
     return FysgPlayerState(
       isPlaying: isPlaying ?? this.isPlaying,
-      currentSong: currentSong ?? this.currentSong,
+      currentSong: clearCurrentSong ? null : (currentSong ?? this.currentSong),
       position: position ?? this.position,
       duration: duration ?? this.duration,
       queue: queue ?? this.queue,
@@ -1085,6 +1086,82 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
       return;
     }
     _audioPlayer.seekToPrevious();
+  }
+
+  /// 从当前播放队列中移除指定索引歌曲。
+  Future<void> removeFromQueue(int index) async {
+    if (index < 0 || index >= state.queue.length) return;
+    if (state.queue.length <= 1) {
+      _queueBuildToken++;
+      _suppressIndexSync = false;
+      try {
+        await _audioPlayer.stop();
+        await _audioPlayer.setAudioSources(const []);
+      } catch (_) {}
+      state = state.copyWith(
+        isPlaying: false,
+        clearCurrentSong: true,
+        position: Duration.zero,
+        duration: Duration.zero,
+        queue: const [],
+        currentIndex: -1,
+      );
+      _syncBackgroundPlayback(force: true);
+      return;
+    }
+
+    final nextQueue = List<Song>.from(state.queue)..removeAt(index);
+    final isPlayerSynced = _audioPlayer.sequence.length == state.queue.length;
+
+    if (index < state.currentIndex) {
+      final newIndex = state.currentIndex - 1;
+      if (isPlayerSynced) {
+        _suppressIndexSync = true;
+        try {
+          await _audioPlayer.removeAudioSourceAt(index);
+        } catch (_) {}
+        _suppressIndexSync = false;
+      }
+      state = state.copyWith(queue: nextQueue, currentIndex: newIndex);
+      _persistQueueCache();
+      _persistPlaybackState();
+    } else if (index > state.currentIndex) {
+      if (isPlayerSynced) {
+        _suppressIndexSync = true;
+        try {
+          await _audioPlayer.removeAudioSourceAt(index);
+        } catch (_) {}
+        _suppressIndexSync = false;
+      }
+      state = state.copyWith(queue: nextQueue);
+      _persistQueueCache();
+    } else {
+      // 移除的是当前正在播放的歌曲
+      final newIndex = index >= nextQueue.length ? 0 : index;
+      if (isPlayerSynced) {
+        _suppressIndexSync = true;
+        try {
+          await _audioPlayer.removeAudioSourceAt(index);
+          if (newIndex == 0 && index >= nextQueue.length) {
+            await _audioPlayer.seek(Duration.zero, index: 0);
+          }
+        } catch (_) {}
+        _suppressIndexSync = false;
+        final nextSong = nextQueue[newIndex];
+        state = state.copyWith(
+          queue: nextQueue,
+          currentIndex: newIndex,
+          currentSong: nextSong,
+          position: Duration.zero,
+          duration: _audioPlayer.duration ?? Duration.zero,
+        );
+        _persistQueueCache();
+        _persistPlaybackState();
+        _syncBackgroundNowPlaying(nextSong);
+      } else {
+        await logQueue(nextQueue, newIndex);
+      }
+    }
   }
 }
 

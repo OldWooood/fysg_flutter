@@ -49,13 +49,15 @@ class _PlaylistBottomSheetState extends ConsumerState<PlaylistBottomSheet> {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                // Mode Toggle
+                // Mode Toggle + 队列歌曲总数
                 TextButton.icon(
                   onPressed: () {
                     ref.read(playerProvider.notifier).toggleMode();
                   },
                   icon: Icon(_getModeIcon(playerState.mode)),
-                  label: Text(_getModeLabel(playerState.mode, context)),
+                  label: Text(
+                    '${_getModeLabel(playerState.mode, context)} (${queue.length})',
+                  ),
                 ),
 
                 // Close
@@ -106,6 +108,15 @@ class _PlaylistBottomSheetState extends ConsumerState<PlaylistBottomSheet> {
                           song.artist ?? AppLocalizations.of(context).unknown,
                           maxLines: 1,
                           style: const TextStyle(fontSize: 12),
+                        ),
+                        trailing: IconButton(
+                          tooltip: AppLocalizations.of(context).removeFromQueue,
+                          icon: const Icon(Icons.close, size: 18),
+                          onPressed: () {
+                            ref
+                                .read(playerProvider.notifier)
+                                .removeFromQueue(index);
+                          },
                         ),
                         onTap: () {
                           // 同队列内切歌直接 seek，避免重建整个播放列表和后台重复展开

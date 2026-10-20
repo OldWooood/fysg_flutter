@@ -71,6 +71,7 @@ class AppLocalizations {
       'error_network': 'Network failed, try again later',
       'error_cache': 'Cache failed',
       'download_failed': 'Download failed',
+      'remove_from_queue': 'Remove from queue',
     },
     'zh': {
       'home': '首页',
@@ -132,6 +133,7 @@ class AppLocalizations {
       'error_network': '网络连接失败，请稍后重试',
       'error_cache': '缓存操作失败',
       'download_failed': '下载失败',
+      'remove_from_queue': '从列表中移除',
     },
   };
 
@@ -202,6 +204,9 @@ class AppLocalizations {
   String get errorNetwork => _get(locale, 'error_network');
   String get errorCache => _get(locale, 'error_cache');
   String get downloadFailed => _get(locale, 'download_failed');
+  String get removeFromQueue => _get(locale, 'remove_from_queue');
+  String songCount(int count) =>
+      locale.languageCode == 'zh' ? '$count 首' : '$count songs';
   String errorNotFound(String resource) =>
       '$resource${locale.languageCode == 'zh' ? '不存在' : ' not found'}';
 }

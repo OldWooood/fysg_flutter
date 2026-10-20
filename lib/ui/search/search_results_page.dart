@@ -297,6 +297,8 @@ class _SearchResultsPageState extends ConsumerState<SearchResultsPage> {
     }
     return SearchSuggestionsList(
       suggestions: _suggestions,
+      highlight: true,
+      query: _searchController.text,
       onSelect: _newSearch,
     );
   }

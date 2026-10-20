@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../../models/song.dart';
+import '../../providers/player_provider.dart';
 import 'song_cover.dart';
 
-class SongListTile extends StatelessWidget {
+class SongListTile extends ConsumerWidget {
   final Song song;
   final VoidCallback onTap;
   final Widget? leading;
@@ -31,14 +33,32 @@ class SongListTile extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
-    final effectiveTitleStyle =
+  Widget build(BuildContext context, WidgetRef ref) {
+    // 颗粒度订阅：仅当本行的播放状态切换（true <-> false）时才重建本行，
+    // 首页/搜索/历史/已下载/歌单详情统一获得当前播放高亮，且父列表零重建。
+    final isCurrentSong = ref.watch(
+      playerProvider.select((s) => s.currentSong?.id == song.id),
+    );
+    final primaryColor = Theme.of(context).colorScheme.primary;
+
+    final baseTitleStyle =
         titleStyle ??
         Theme.of(
           context,
         ).textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.bold);
+    final effectiveTitleStyle = isCurrentSong
+        ? baseTitleStyle?.copyWith(
+            color: primaryColor,
+            fontWeight: FontWeight.bold,
+          )
+        : baseTitleStyle;
     final effectiveSubtitleStyle =
         subtitleStyle ?? Theme.of(context).textTheme.bodyMedium;
+    final effectiveTrailing =
+        trailing ??
+        (isCurrentSong
+            ? Icon(Icons.equalizer, color: primaryColor, size: 22)
+            : null);
 
     return ListTile(
       contentPadding: contentPadding,
@@ -55,7 +75,7 @@ class SongListTile extends StatelessWidget {
         overflow: TextOverflow.ellipsis,
         style: effectiveSubtitleStyle,
       ),
-      trailing: trailing,
+      trailing: effectiveTrailing,
       onTap: onTap,
     );
   }

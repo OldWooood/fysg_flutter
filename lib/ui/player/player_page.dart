@@ -506,22 +506,33 @@ class _LyricsViewState extends ConsumerState<_LyricsView>
               MediaQuery.paddingOf(context).bottom + 40,
             ),
             itemBuilder: (context, index) {
+              final line = widget.lyrics[index];
               final isCurrent = index == currentIndex;
-              return Padding(
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                child: Center(
-                  child: Semantics(
-                    selected: isCurrent,
-                    child: Text(
-                      widget.lyrics[index].text,
-                      style: TextStyle(
-                        color: isCurrent ? onSurface : onSurfaceDim,
-                        fontSize: (isCurrent ? 24 : 18) * textScaleFactor,
-                        fontWeight: isCurrent
-                            ? FontWeight.bold
-                            : FontWeight.normal,
+              return InkWell(
+                borderRadius: BorderRadius.circular(8),
+                onTap: () {
+                  _scrollTimer?.cancel();
+                  _userScrolling = false;
+                  ref.read(playerProvider.notifier).seek(line.offset);
+                  _scrollToCurrentLine(index);
+                },
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Center(
+                    child: Semantics(
+                      button: true,
+                      selected: isCurrent,
+                      child: Text(
+                        line.text,
+                        style: TextStyle(
+                          color: isCurrent ? onSurface : onSurfaceDim,
+                          fontSize: (isCurrent ? 24 : 18) * textScaleFactor,
+                          fontWeight: isCurrent
+                              ? FontWeight.bold
+                              : FontWeight.normal,
+                        ),
+                        textAlign: TextAlign.center,
                       ),
-                      textAlign: TextAlign.center,
                     ),
                   ),
                 ),
