@@ -6,12 +6,11 @@ import '../api/fysg_service.dart';
 import '../models/song.dart';
 import '../utils/app_log.dart';
 import '../utils/constants.dart';
-import '../utils/lru_cache.dart';
 import 'song_resolver.dart';
 
 /// 从 `PlayerNotifier` 抽出的队列展开职责（之前全在 1000 行上帝类里）。
 ///
-/// - 共享调用方的详情缓存（有界 LRU，按引用传递，不另起一套）。
+/// - 统一复用 `FysgService` 内的有界 LRU 详情缓存与 inFlight 去重，不再维护第二份。
 /// - 同步 IO 已消除：目录 Future 在 DownloadService 内缓存，
 ///   已下载 id 走内存索引，命中零 IO。
 typedef PlayableEntry = ({Song song, AudioSource source});
@@ -20,16 +19,13 @@ class QueueExpander {
   QueueExpander({
     required FysgService service,
     required DownloadService downloads,
-    required LruCache<int, Song> songDetailsCache,
     SongResolver resolver = const SongResolver(),
   }) : _service = service,
        _downloads = downloads,
-       _songDetailsCache = songDetailsCache,
        _resolver = resolver;
 
   final FysgService _service;
   final DownloadService _downloads;
-  final LruCache<int, Song> _songDetailsCache;
   final SongResolver _resolver;
 
   Future<AudioSource> createAudioSource(Song song) async {
@@ -74,10 +70,12 @@ class QueueExpander {
             : '${AssetConfig.audioBase}$relative';
         resolvedSong = resolvedSong.copyWith(url: () => absolute);
       } else {
-        final result = await _service.getSongDetails(resolvedSong.id);
+        final result = await _service.getSongDetails(
+          resolvedSong.id,
+          forceRefresh: true,
+        );
         result.when(
           ok: (details) {
-            _songDetailsCache.put(resolvedSong.id, details);
             resolvedSong = _resolver.mergeSong(resolvedSong, details);
           },
           err: (error) {
@@ -96,7 +94,6 @@ class QueueExpander {
       final result = await _service.getSongDetails(resolvedSong.id);
       return await result.when(
         ok: (details) async {
-          _songDetailsCache.put(resolvedSong.id, details);
           final merged = _resolver.mergeSong(resolvedSong, details);
           try {
             final source = await createAudioSource(merged);

@@ -186,6 +186,23 @@ class QueuePersistence {
       );
     });
   }
+
+  Future<void> persistPlaybackMode(String modeName) async {
+    if (_disposed) return;
+    try {
+      final prefs = _ref.read(sharedPreferencesProvider);
+      await prefs.setString(AppConstants.spPlaybackModeKey, modeName);
+    } catch (_) {}
+  }
+
+  String? loadPlaybackMode() {
+    try {
+      final prefs = _ref.read(sharedPreferencesProvider);
+      return prefs.getString(AppConstants.spPlaybackModeKey);
+    } catch (_) {
+      return null;
+    }
+  }
 }
 
 /// 冷启动恢复时解析缓存队列，脏数据逐条跳过。

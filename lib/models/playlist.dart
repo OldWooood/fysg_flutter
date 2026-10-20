@@ -1,3 +1,4 @@
+import '../api/asset_config.dart';
 import '../utils/constants.dart';
 
 class Playlist {
@@ -71,10 +72,11 @@ class Playlist {
       final id = rawId is int ? rawId : int.tryParse('$rawId') ?? 0;
       final rawName = json['name'];
       final rawCount = json['count'];
+      final rawCover = json['cover'] == null ? null : '${json['cover']}';
       return Playlist(
         id: id,
         name: rawName == null ? '' : '$rawName',
-        cover: json['cover'] == null ? null : '${json['cover']}',
+        cover: AssetConfig.rewriteImageUrl(rawCover),
         count: rawCount is int ? rawCount : int.tryParse('$rawCount'),
         type: json['type'] == null ? 'playlist' : '${json['type']}',
       );

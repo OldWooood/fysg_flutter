@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
+
 import '../../providers/player_provider.dart';
 import '../../l10n/app_localizations.dart';
 
@@ -107,9 +108,10 @@ class _PlaylistBottomSheetState extends ConsumerState<PlaylistBottomSheet> {
                           style: const TextStyle(fontSize: 12),
                         ),
                         onTap: () {
+                          // 同队列内切歌直接 seek，避免重建整个播放列表和后台重复展开
                           ref
                               .read(playerProvider.notifier)
-                              .logQueue(queue, index);
+                              .playSong(song, keepQueue: true);
                         },
                       );
                     },

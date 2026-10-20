@@ -1,6 +1,8 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fysg_flutter/api/asset_config.dart';
+import 'package:fysg_flutter/models/playlist.dart';
 import 'package:fysg_flutter/models/song.dart';
+import 'package:fysg_flutter/utils/constants.dart';
 
 void main() {
   group('AssetConfig.parseDomains', () {
@@ -56,6 +58,47 @@ void main() {
         audioBase: 'https://img.example.com/song_high',
       );
       expect(song.url, 'https://img.example.com/song_high/x.mp3');
+    });
+  });
+
+  group('AssetConfig manifest domain migration', () {
+    tearDown(() {
+      AssetConfig.imageBase = AppConstants.assetBaseUrl;
+      AssetConfig.audioBase = '${AppConstants.assetBaseUrl}/song_high';
+    });
+
+    test(
+      'Song.fromManifest & Playlist.fromManifest migrate legacy CDN domains',
+      () {
+        AssetConfig.imageBase = 'https://cdn-new.example.com';
+        AssetConfig.audioBase = 'https://cdn-new.example.com/song_high';
+
+        final song = Song.fromManifest({
+          'id': 10,
+          'name': 'migrated',
+          'cover': 'https://sg-file.nanqiao.xyz/images/cover.jpg',
+          'url': 'https://sg-file.nanqiao.xyz/song_high/2024/a.mp3',
+        });
+        expect(song.cover, 'https://cdn-new.example.com/images/cover.jpg');
+        expect(song.url, 'https://cdn-new.example.com/song_high/2024/a.mp3');
+
+        final playlist = Playlist.fromManifest({
+          'id': 20,
+          'name': 'pl',
+          'cover': 'https://sg-file.nanqiao.xyz/gepu/p.jpg',
+          'type': 'playlist',
+        });
+        expect(playlist.cover, 'https://cdn-new.example.com/gepu/p.jpg');
+      },
+    );
+
+    test('leaves unrelated external URLs untouched', () {
+      final song = Song.fromManifest({
+        'id': 1,
+        'name': 's',
+        'url': 'https://example.test/1.mp3',
+      });
+      expect(song.url, 'https://example.test/1.mp3');
     });
   });
 }

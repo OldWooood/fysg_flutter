@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import '../api/download_service.dart';
 import '../models/song.dart';
 import '../utils/app_log.dart';
@@ -7,11 +9,14 @@ import '../utils/app_log.dart';
 /// - 预取与正式下载共享 DownloadService 内的信号量槽位，
 ///   不再用全局 bool 丢弃第二次预取。
 /// - 播放过半才触发，且同一切换只触发一次（_lastPrefetchSongId）。
+/// - 预取就绪后通过 [onPrefetchReady] 回调通知播放器将队列中下一首的
+///   网络音源热替换为本地预取文件，确保当前播放队列立即消费预取成果。
 class PrefetchManager {
-  PrefetchManager({required DownloadService downloads})
+  PrefetchManager({required DownloadService downloads, this.onPrefetchReady})
     : _downloads = downloads;
 
   final DownloadService _downloads;
+  final void Function(Song song, File file)? onPrefetchReady;
   bool _prefetchCacheLoaded = false;
   Set<int> _prefetchCachedIds = {};
   int? _lastPrefetchSongId;
@@ -24,24 +29,29 @@ class PrefetchManager {
     _prefetchCacheLoaded = true;
   }
 
-  Future<bool> _usePrefetched(Song song) async {
+  Future<File?> _usePrefetched(Song song) async {
     await _loadCacheIfNeeded();
-    if (!_prefetchCachedIds.contains(song.id)) return false;
+    if (!_prefetchCachedIds.contains(song.id)) return null;
     if (!await _downloads.isPrefetched(song.id)) {
       _prefetchCachedIds.remove(song.id);
-      return false;
+      return null;
     }
-    return true;
+    return _downloads.getPrefetchFile(song.id);
   }
 
-  Future<void> _prefetch(Song song) async {
+  Future<File?> _prefetch(Song song) async {
     try {
       await _loadCacheIfNeeded();
-      if (await _downloads.isDownloaded(song.id)) return;
+      if (await _downloads.isDownloaded(song.id)) {
+        return await _downloads.getLocalFile(song.id);
+      }
       await _downloads.prefetchSong(song);
+      if (!await _downloads.isPrefetched(song.id)) return null;
       _prefetchCachedIds.add(song.id);
+      return await _downloads.getPrefetchFile(song.id);
     } catch (e) {
       AppLog.d('Prefetch failed for song ${song.id}: $e');
+      return null;
     }
   }
 
@@ -60,8 +70,11 @@ class PrefetchManager {
     if (_lastPrefetchSongId == nextSong.id) return;
 
     _lastPrefetchSongId = nextSong.id;
-    _usePrefetched(nextSong).then((used) {
-      if (!used) _prefetch(nextSong);
+    _usePrefetched(nextSong).then((existingFile) async {
+      final file = existingFile ?? await _prefetch(nextSong);
+      if (file != null) {
+        onPrefetchReady?.call(nextSong, file);
+      }
     });
   }
 }

@@ -48,6 +48,7 @@ class AppAudioHandler extends BaseAudioHandler with SeekHandler {
 
   Future<void> setNowPlaying(
     Song? song, {
+    Duration? duration,
     String unknownArtist = 'Unknown Artist',
   }) async {
     if (song == null) return;
@@ -60,6 +61,9 @@ class AppAudioHandler extends BaseAudioHandler with SeekHandler {
             ? unknownArtist
             : song.artist,
         album: song.album,
+        duration: (duration != null && duration > Duration.zero)
+            ? duration
+            : null,
         artUri: song.cover == null ? null : Uri.tryParse(song.cover!),
         // 封面 CDN 需要带请求头才能加载
         artHeaders: ImageCacheService.headers,

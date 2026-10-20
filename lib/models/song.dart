@@ -1,3 +1,4 @@
+import '../api/asset_config.dart';
 import '../utils/constants.dart';
 
 class Song {
@@ -108,13 +109,15 @@ class Song {
       final idRaw = json['id'];
       final id = idRaw is int ? idRaw : int.tryParse('$idRaw') ?? 0;
       final nameRaw = json['name'];
+      final rawCover = json['cover'] == null ? null : '${json['cover']}';
+      final rawUrl = json['url'] == null ? null : '${json['url']}';
       return Song(
         id: id,
         name: nameRaw == null ? '' : '$nameRaw',
         artist: json['artist'] == null ? null : '${json['artist']}',
         album: json['album'] == null ? null : '${json['album']}',
-        cover: json['cover'] == null ? null : '${json['cover']}',
-        url: json['url'] == null ? null : '${json['url']}',
+        cover: AssetConfig.rewriteImageUrl(rawCover),
+        url: AssetConfig.rewriteAudioUrl(rawUrl),
         lyrics: json['lyrics'] == null ? null : '${json['lyrics']}',
       );
     } catch (_) {

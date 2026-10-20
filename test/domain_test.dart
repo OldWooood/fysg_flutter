@@ -1,7 +1,11 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:fysg_flutter/l10n/app_localizations.dart';
 import 'package:fysg_flutter/providers/song_resolver.dart';
 import 'package:fysg_flutter/models/song.dart';
 import 'package:fysg_flutter/utils/result.dart';
+import 'package:fysg_flutter/utils/toast_utils.dart';
 import 'package:fysg_flutter/api/fysg_service.dart';
 
 void main() {
@@ -37,6 +41,59 @@ void main() {
 
     test('message still readable', () {
       expect(NetworkError.timeout().message, contains('超时'));
+    });
+
+    testWidgets('localizedAppError formats NotFoundError without duplication', (
+      tester,
+    ) async {
+      late String zhText;
+      late String enText;
+      await tester.pumpWidget(
+        MaterialApp(
+          locale: const Locale('zh'),
+          localizationsDelegates: const [
+            AppLocalizationsDelegate(),
+            GlobalMaterialLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+            GlobalCupertinoLocalizations.delegate,
+          ],
+          supportedLocales: const [Locale('zh'), Locale('en')],
+          home: Builder(
+            builder: (context) {
+              zhText = ToastUtils.localizedAppError(
+                context,
+                AppError.notFound('歌曲 42'),
+              );
+              return const SizedBox.shrink();
+            },
+          ),
+        ),
+      );
+      expect(zhText, '歌曲 42不存在');
+      expect(zhText, isNot(contains('不存在不存在')));
+
+      await tester.pumpWidget(
+        MaterialApp(
+          locale: const Locale('en'),
+          localizationsDelegates: const [
+            AppLocalizationsDelegate(),
+            GlobalMaterialLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+            GlobalCupertinoLocalizations.delegate,
+          ],
+          supportedLocales: const [Locale('zh'), Locale('en')],
+          home: Builder(
+            builder: (context) {
+              enText = ToastUtils.localizedAppError(
+                context,
+                AppError.notFound('Song 42'),
+              );
+              return const SizedBox.shrink();
+            },
+          ),
+        ),
+      );
+      expect(enText, 'Song 42 not found');
     });
   });
 

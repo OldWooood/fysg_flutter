@@ -4,7 +4,9 @@ import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:fysg_flutter/api/asset_config.dart';
 import 'package:fysg_flutter/api/fysg_service.dart';
+import 'package:fysg_flutter/utils/constants.dart';
 
 /// 脚本化适配器：按调用序号返回预设响应，序号越界后重复最后一个。
 class _ScriptedAdapter implements HttpClientAdapter {
@@ -166,5 +168,80 @@ void main() {
     expect(result.isErr, isTrue);
     expect(result.error!.code, 'cancelled');
     expect(adapter.requests, hasLength(1));
+  });
+
+  test('并发相同请求失败时所有调用方均拿到 Result.err 而非未捕获异常', () async {
+    final adapter = _ScriptedAdapter([
+      (_, _) async {
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        return _json({'code': 1}, statusCode: 404);
+      },
+    ]);
+    final service = _service(adapter);
+
+    final results = await Future.wait([
+      service.getSongDetails(99),
+      service.getSongDetails(99),
+    ]);
+
+    expect(results.every((r) => r.isErr), isTrue);
+    expect(results.map((r) => r.error!.code), ['notFound', 'notFound']);
+    expect(adapter.requests, hasLength(1));
+  });
+
+  test('带独立 CancelToken 的搜索建议取消不会误伤并发同词请求', () async {
+    final adapter = _ScriptedAdapter([
+      (_, _) async {
+        await Future<void>.delayed(const Duration(milliseconds: 60));
+        return _json({
+          'code': 0,
+          'data': [
+            {'name': 'Song A'},
+          ],
+        });
+      },
+    ]);
+    final service = _service(adapter);
+    final tokenA = CancelToken();
+    final tokenB = CancelToken();
+
+    final futureA = service.getSearchSuggestions('grace', cancelToken: tokenA);
+    final futureB = service.getSearchSuggestions('grace', cancelToken: tokenB);
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+    tokenA.cancel('caller A cancelled');
+
+    final resA = await futureA;
+    final resB = await futureB;
+    expect(resA.isErr, isTrue);
+    expect(resA.error!.code, 'cancelled');
+    expect(resB.isOk, isTrue);
+    expect(resB.value!.single['name'], 'Song A');
+  });
+
+  test('歌单/专辑分页封面跟随动态 AssetConfig.imageBase', () async {
+    AssetConfig.imageBase = 'https://dynamic-img.example.com';
+    addTearDown(() {
+      AssetConfig.imageBase = AppConstants.assetBaseUrl;
+    });
+
+    final adapter = _ScriptedAdapter([
+      (_, _) => _json({
+        'code': 0,
+        'data': {
+          'list': [
+            {'id': 1, 'name': 'Album 1', 'cover': '/gepu/a1.jpg'},
+          ],
+          'count': 1,
+        },
+      }),
+    ]);
+    final service = _service(adapter);
+    final res = await service.getAlbumsPaged();
+
+    expect(res.isOk, isTrue);
+    expect(
+      res.value!.items.single.cover,
+      'https://dynamic-img.example.com/gepu/a1.jpg',
+    );
   });
 }

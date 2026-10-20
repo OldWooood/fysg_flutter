@@ -4,6 +4,7 @@ import '../models/playlist.dart';
 import '../models/song.dart';
 import '../utils/app_log.dart';
 import '../utils/constants.dart';
+import '../utils/lru_cache.dart';
 import '../utils/result.dart';
 import 'asset_config.dart';
 
@@ -122,21 +123,33 @@ class FysgService {
     }
   }
 
-  final Map<int, Song> _songDetailsCache = {};
+  // 全局统一的歌曲详情 LRU 缓存（PlayerNotifier 与 QueueExpander 共享此份，不再各持一份）
+  final LruCache<int, Song> _songDetailsCache = LruCache<int, Song>(
+    maxEntries: AppConstants.songDetailsCacheMaxEntries,
+  );
   final Map<int, Future<Song>> _songDetailsInFlight = {};
-  final Map<String, _CacheEntry<List<Map<String, dynamic>>>>
-  _searchSuggestionsCache = {};
+  final LruCache<String, _CacheEntry<List<Map<String, dynamic>>>>
+  _searchSuggestionsCache = LruCache(
+    maxEntries: AppConstants.searchCacheMaxEntries,
+  );
   final Map<String, Future<List<Map<String, dynamic>>>>
   _searchSuggestionsInFlight = {};
-  final Map<String, _CacheEntry<PagedList<Song>>> _searchSongsCache = {};
+  final LruCache<String, _CacheEntry<PagedList<Song>>> _searchSongsCache =
+      LruCache(maxEntries: AppConstants.searchCacheMaxEntries);
   final Map<String, Future<PagedList<Song>>> _searchSongsInFlight = {};
-  final Map<String, _CacheEntry<PagedList<Song>>> _recommendedSongsCache = {};
+  final LruCache<String, _CacheEntry<PagedList<Song>>> _recommendedSongsCache =
+      LruCache(maxEntries: AppConstants.recommendCacheMaxEntries);
   final Map<String, Future<PagedList<Song>>> _recommendedSongsInFlight = {};
-  final Map<String, _CacheEntry<PagedList<Playlist>>> _collectionCache = {};
+  final LruCache<String, _CacheEntry<PagedList<Playlist>>> _collectionCache =
+      LruCache(maxEntries: AppConstants.collectionCacheMaxEntries);
   final Map<String, Future<PagedList<Playlist>>> _collectionInFlight = {};
-  final Map<String, _CacheEntry<PagedList<Song>>> _collectionSongsCache = {};
+  final LruCache<String, _CacheEntry<PagedList<Song>>> _collectionSongsCache =
+      LruCache(maxEntries: AppConstants.collectionCacheMaxEntries);
   final Map<String, Future<PagedList<Song>>> _collectionSongsInFlight = {};
   final Dio _dio;
+
+  /// 同步读取已缓存的歌曲详情（命中时自动刷新 LRU 顺序）。
+  Song? getCachedSongDetails(int songId) => _songDetailsCache.get(songId);
 
   FysgService({Dio? dio})
     : _dio =
@@ -158,15 +171,6 @@ class FysgService {
   // 检查缓存是否新鲜
   bool _isFresh(DateTime timestamp, Duration ttl) {
     return DateTime.now().difference(timestamp) < ttl;
-  }
-
-  /// 有界写入：命中时刷新顺序，超限淘汰最旧，防长会话无界增长。
-  static void _putBounded<K, V>(Map<K, V> map, K key, V value, int max) {
-    map.remove(key);
-    map[key] = value;
-    while (map.length > max) {
-      map.remove(map.keys.first);
-    }
   }
 
   static int _extractCount(Map data) {
@@ -265,39 +269,32 @@ class FysgService {
     if (normalized.isEmpty) return Result.ok(const []);
 
     final cacheKey = '${normalized.toLowerCase()}|$size';
-    final cached = _searchSuggestionsCache[cacheKey];
+    final cached = _searchSuggestionsCache.get(cacheKey);
     if (cached != null &&
         _isFresh(cached.timestamp, AppConstants.searchCacheTtl)) {
       return Result.ok(List<Map<String, dynamic>>.from(cached.data));
     }
 
-    final inFlight = _searchSuggestionsInFlight[cacheKey];
-    if (inFlight != null) {
-      try {
-        final result = await inFlight;
-        return Result.ok(result);
-      } on DioException catch (e) {
-        if (e.type == DioExceptionType.cancel) {
-          return Result.err(NetworkError('已取消', 'cancelled'));
-        }
-        rethrow;
-      }
+    // 传入了独立 cancelToken 的请求不放入共享 inFlight，
+    // 避免调用方 A 取消自己的 token 时把调用方 B 复用的请求一并取消。
+    final canShareInFlight = cancelToken == null;
+    final existing = canShareInFlight
+        ? _searchSuggestionsInFlight[cacheKey]
+        : null;
+    final request =
+        existing ??
+        _fetchSearchSuggestions(normalized, size, cancelToken: cancelToken);
+    if (canShareInFlight && existing == null) {
+      _searchSuggestionsInFlight[cacheKey] = request;
     }
-
-    final request = _fetchSearchSuggestions(
-      normalized,
-      size,
-      cancelToken: cancelToken,
-    );
-    _searchSuggestionsInFlight[cacheKey] = request;
     try {
       final result = await request;
-      _putBounded(
-        _searchSuggestionsCache,
-        cacheKey,
-        _CacheEntry(timestamp: DateTime.now(), data: result),
-        AppConstants.searchCacheMaxEntries,
-      );
+      if (existing == null) {
+        _searchSuggestionsCache.put(
+          cacheKey,
+          _CacheEntry(timestamp: DateTime.now(), data: result),
+        );
+      }
       return Result.ok(List<Map<String, dynamic>>.from(result));
     } on DioException catch (e) {
       if (e.type == DioExceptionType.cancel) {
@@ -309,7 +306,9 @@ class FysgService {
     } catch (e) {
       return Result.err(AppError.unknown(e));
     } finally {
-      _searchSuggestionsInFlight.remove(cacheKey);
+      if (canShareInFlight && existing == null) {
+        _searchSuggestionsInFlight.remove(cacheKey);
+      }
     }
   }
 
@@ -368,35 +367,34 @@ class FysgService {
     }
 
     final cacheKey = '${normalized.toLowerCase()}|$page|$size';
-    final cached = _searchSongsCache[cacheKey];
+    final cached = _searchSongsCache.get(cacheKey);
     if (cached != null &&
         _isFresh(cached.timestamp, AppConstants.searchCacheTtl)) {
       return Result.ok(cached.data);
     }
 
-    final inFlight = _searchSongsInFlight[cacheKey];
-    if (inFlight != null) {
-      final result = await inFlight;
-      return Result.ok(result);
+    final existing = _searchSongsInFlight[cacheKey];
+    final request = existing ?? _fetchSearchSongs(normalized, page, size);
+    if (existing == null) {
+      _searchSongsInFlight[cacheKey] = request;
     }
-
-    final request = _fetchSearchSongs(normalized, page, size);
-    _searchSongsInFlight[cacheKey] = request;
     try {
       final result = await request;
-      _putBounded(
-        _searchSongsCache,
-        cacheKey,
-        _CacheEntry(timestamp: DateTime.now(), data: result),
-        AppConstants.searchCacheMaxEntries,
-      );
+      if (existing == null) {
+        _searchSongsCache.put(
+          cacheKey,
+          _CacheEntry(timestamp: DateTime.now(), data: result),
+        );
+      }
       return Result.ok(result);
     } on AppError catch (e) {
       return Result.err(e);
     } catch (e) {
       return Result.err(AppError.unknown(e));
     } finally {
-      _searchSongsInFlight.remove(cacheKey);
+      if (existing == null) {
+        _searchSongsInFlight.remove(cacheKey);
+      }
     }
   }
 
@@ -452,35 +450,34 @@ class FysgService {
     int size = AppConstants.defaultPageSize,
   }) async {
     final cacheKey = '$page|$size';
-    final cached = _recommendedSongsCache[cacheKey];
+    final cached = _recommendedSongsCache.get(cacheKey);
     if (cached != null &&
         _isFresh(cached.timestamp, AppConstants.recommendCacheTtl)) {
       return Result.ok(cached.data);
     }
 
-    final inFlight = _recommendedSongsInFlight[cacheKey];
-    if (inFlight != null) {
-      final result = await inFlight;
-      return Result.ok(result);
+    final existing = _recommendedSongsInFlight[cacheKey];
+    final request = existing ?? _fetchRecommendedSongs(page, size);
+    if (existing == null) {
+      _recommendedSongsInFlight[cacheKey] = request;
     }
-
-    final request = _fetchRecommendedSongs(page, size);
-    _recommendedSongsInFlight[cacheKey] = request;
     try {
       final result = await request;
-      _putBounded(
-        _recommendedSongsCache,
-        cacheKey,
-        _CacheEntry(timestamp: DateTime.now(), data: result),
-        AppConstants.recommendCacheMaxEntries,
-      );
+      if (existing == null) {
+        _recommendedSongsCache.put(
+          cacheKey,
+          _CacheEntry(timestamp: DateTime.now(), data: result),
+        );
+      }
       return Result.ok(result);
     } on AppError catch (e) {
       return Result.err(e);
     } catch (e) {
       return Result.err(AppError.unknown(e));
     } finally {
-      _recommendedSongsInFlight.remove(cacheKey);
+      if (existing == null) {
+        _recommendedSongsInFlight.remove(cacheKey);
+      }
     }
   }
 
@@ -525,35 +522,22 @@ class FysgService {
     bool forceRefresh = false,
   }) async {
     if (!forceRefresh) {
-      final cached = _songDetailsCache[songId];
+      final cached = _songDetailsCache.get(songId);
       if (cached != null) {
-        // 刷新 LRU 顺序
-        _songDetailsCache.remove(songId);
-        _songDetailsCache[songId] = cached;
         return Result.ok(cached);
-      }
-
-      final inFlight = _songDetailsInFlight[songId];
-      if (inFlight != null) {
-        final result = await inFlight;
-        return Result.ok(result);
       }
     }
 
-    final request = _fetchSongDetails(songId);
-    if (!forceRefresh) {
+    final existing = forceRefresh ? null : _songDetailsInFlight[songId];
+    final request = existing ?? _fetchSongDetails(songId);
+    if (!forceRefresh && existing == null) {
       _songDetailsInFlight[songId] = request;
     }
 
     try {
       final song = await request;
-      if (!forceRefresh) {
-        _putBounded(
-          _songDetailsCache,
-          songId,
-          song,
-          AppConstants.songDetailsCacheMaxEntries,
-        );
+      if (existing == null) {
+        _songDetailsCache.put(songId, song);
       }
       return Result.ok(song);
     } on AppError catch (e) {
@@ -561,7 +545,7 @@ class FysgService {
     } catch (e) {
       return Result.err(AppError.unknown(e));
     } finally {
-      if (!forceRefresh) {
+      if (!forceRefresh && existing == null) {
         _songDetailsInFlight.remove(songId);
       }
     }
@@ -605,30 +589,26 @@ class FysgService {
     String type = 'playlist',
   }) async {
     final cacheKey = '$endpoint|$type|$page|$size';
-    final cached = _collectionCache[cacheKey];
+    final cached = _collectionCache.get(cacheKey);
     if (cached != null &&
         _isFresh(cached.timestamp, AppConstants.collectionCacheTtl)) {
       return Result.ok(cached.data);
     }
-    final inFlight = _collectionInFlight[cacheKey];
-    if (inFlight != null) {
-      return Result.ok(await inFlight);
+    final existing = _collectionInFlight[cacheKey];
+    final request =
+        existing ??
+        _doFetchCollection(endpoint, page: page, size: size, type: type);
+    if (existing == null) {
+      _collectionInFlight[cacheKey] = request;
     }
-    final request = _doFetchCollection(
-      endpoint,
-      page: page,
-      size: size,
-      type: type,
-    );
-    _collectionInFlight[cacheKey] = request;
     try {
       final result = await request;
-      _putBounded(
-        _collectionCache,
-        cacheKey,
-        _CacheEntry(timestamp: DateTime.now(), data: result),
-        AppConstants.collectionCacheMaxEntries,
-      );
+      if (existing == null) {
+        _collectionCache.put(
+          cacheKey,
+          _CacheEntry(timestamp: DateTime.now(), data: result),
+        );
+      }
       return Result.ok(result);
     } on AppError catch (e) {
       return Result.err(e);
@@ -636,7 +616,9 @@ class FysgService {
       AppLog.d('Error fetching collection $endpoint: $e');
       return Result.err(AppError.unknown(e));
     } finally {
-      _collectionInFlight.remove(cacheKey);
+      if (existing == null) {
+        _collectionInFlight.remove(cacheKey);
+      }
     }
   }
 
@@ -660,7 +642,11 @@ class FysgService {
         final data = jsonResponse['data'];
         if (data is Map && data['list'] != null) {
           final items = (data['list'] as List).whereType<Map>().map((item) {
-            return Playlist.fromJson(Map<String, dynamic>.from(item), type);
+            return Playlist.fromJson(
+              Map<String, dynamic>.from(item),
+              type,
+              assetBase: AssetConfig.imageBase,
+            );
           }).toList();
           return PagedList(
             items: items,
@@ -722,30 +708,26 @@ class FysgService {
     }
 
     final cacheKey = '$type|$id|$page|$size';
-    final cached = _collectionSongsCache[cacheKey];
+    final cached = _collectionSongsCache.get(cacheKey);
     if (cached != null &&
         _isFresh(cached.timestamp, AppConstants.collectionCacheTtl)) {
       return Result.ok(cached.data);
     }
-    final inFlight = _collectionSongsInFlight[cacheKey];
-    if (inFlight != null) {
-      return Result.ok(await inFlight);
+    final existing = _collectionSongsInFlight[cacheKey];
+    final request =
+        existing ??
+        _doFetchCollectionSongs(paramKey, '$id', page: page, size: size);
+    if (existing == null) {
+      _collectionSongsInFlight[cacheKey] = request;
     }
-    final request = _doFetchCollectionSongs(
-      paramKey,
-      '$id',
-      page: page,
-      size: size,
-    );
-    _collectionSongsInFlight[cacheKey] = request;
     try {
       final paged = await request;
-      _putBounded(
-        _collectionSongsCache,
-        cacheKey,
-        _CacheEntry(timestamp: DateTime.now(), data: paged),
-        AppConstants.collectionCacheMaxEntries,
-      );
+      if (existing == null) {
+        _collectionSongsCache.put(
+          cacheKey,
+          _CacheEntry(timestamp: DateTime.now(), data: paged),
+        );
+      }
       return Result.ok(paged);
     } on AppError catch (e) {
       return Result.err(e);
@@ -753,7 +735,9 @@ class FysgService {
       AppLog.d('Error fetching collection songs ($type:$id): $e');
       return Result.err(AppError.unknown(e));
     } finally {
-      _collectionSongsInFlight.remove(cacheKey);
+      if (existing == null) {
+        _collectionSongsInFlight.remove(cacheKey);
+      }
     }
   }
 

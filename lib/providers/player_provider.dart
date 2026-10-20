@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:just_audio/just_audio.dart';
@@ -10,7 +11,6 @@ import '../audio/app_audio_handler.dart';
 import '../models/song.dart';
 import '../utils/app_log.dart';
 import '../utils/constants.dart';
-import '../utils/lru_cache.dart';
 import 'prefetch_manager.dart';
 import 'queue_expander.dart';
 import 'queue_persistence.dart';
@@ -104,11 +104,6 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
   final AudioPlayer _audioPlayer = AudioPlayer();
   late final FysgService _service;
   late final DownloadService _downloadService;
-  // 有界 LRU（之前只重排不淘汰，长会话无界增长）；与 QueueExpander 共享引用
-  final LruCache<int, Song> _songDetailsCache = LruCache<int, Song>(
-    maxEntries: AppConstants.songDetailsCacheMaxEntries,
-  );
-  final Set<int> _songDetailsLoading = {};
   int _queueBuildToken = 0;
   bool _suppressIndexSync = false;
   ProcessingState _processingState = ProcessingState.idle;
@@ -147,10 +142,12 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
     _expander = QueueExpander(
       service: _service,
       downloads: _downloadService,
-      songDetailsCache: _songDetailsCache,
       resolver: _songResolver,
     );
-    _prefetch = PrefetchManager(downloads: _downloadService);
+    _prefetch = PrefetchManager(
+      downloads: _downloadService,
+      onPrefetchReady: _onPrefetchReady,
+    );
     // build 重跑时实例保留：只初始化一次，避免重复订阅/恢复队列
     if (!_initialized) {
       _initialized = true;
@@ -174,13 +171,45 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
 
   bool get _mounted => !_isDisposed;
 
+  static PlaybackMode _parsePlaybackMode(String? raw) {
+    return switch (raw) {
+      'shuffle' => PlaybackMode.shuffle,
+      'single' => PlaybackMode.single,
+      _ => PlaybackMode.sequence,
+    };
+  }
+
+  Future<void> _applyPlaybackMode(PlaybackMode mode) async {
+    try {
+      switch (mode) {
+        case PlaybackMode.sequence:
+          await _audioPlayer.setLoopMode(LoopMode.all);
+          await _audioPlayer.setShuffleModeEnabled(false);
+          break;
+        case PlaybackMode.shuffle:
+          await _audioPlayer.setLoopMode(LoopMode.all);
+          await _audioPlayer.setShuffleModeEnabled(true);
+          break;
+        case PlaybackMode.single:
+          await _audioPlayer.setLoopMode(LoopMode.one);
+          await _audioPlayer.setShuffleModeEnabled(false);
+          break;
+      }
+    } catch (e) {
+      AppLog.d('Apply playback mode failed: $e');
+    }
+  }
+
   Future<void> _init() async {
+    final restoredMode = _parsePlaybackMode(_persistence.loadPlaybackMode());
+    if (_mounted && restoredMode != state.mode) {
+      state = state.copyWith(mode: restoredMode);
+    }
+
     // Set the playlist as audio source to enable media controls
     try {
       await _audioPlayer.setAudioSources(const []);
-      // Keep initial behavior aligned with default sequence mode.
-      await _audioPlayer.setLoopMode(LoopMode.all);
-      await _audioPlayer.setShuffleModeEnabled(false);
+      await _applyPlaybackMode(restoredMode);
     } catch (e) {
       AppLog.d('Error initializing audio player: $e');
     }
@@ -219,7 +248,12 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
             _prefetch.resetForNewSong();
             final song = state.queue[index];
             if (state.currentIndex != index) {
-              state = state.copyWith(currentIndex: index, currentSong: song);
+              state = state.copyWith(
+                currentIndex: index,
+                currentSong: song,
+                position: Duration.zero,
+                duration: _audioPlayer.duration ?? Duration.zero,
+              );
               _persistPlaybackState();
               _syncBackgroundNowPlaying(song);
               _logHistoryIfNeeded();
@@ -274,7 +308,8 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
           final nextDuration = duration ?? Duration.zero;
           if (!_mounted || state.duration == nextDuration) return;
           state = state.copyWith(duration: nextDuration);
-          _syncBackgroundPlayback();
+          // 拿到真实时长后回填锁屏/通知栏 MediaItem，使系统进度条可拖动并显示总时长
+          _syncBackgroundNowPlaying(state.currentSong);
         },
         onError: (Object e, StackTrace st) {
           AppLog.d('DurationStream error: $e');
@@ -300,8 +335,12 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
       if (keepQueue && state.queue.isNotEmpty) {
         final index = state.queue.indexWhere((s) => s.id == song.id);
         if (index != -1) {
-          await _audioPlayer.seek(Duration.zero, index: index);
-          _audioPlayer.play();
+          if (_audioPlayer.sequence.length == state.queue.length) {
+            await _audioPlayer.seek(Duration.zero, index: index);
+            _audioPlayer.play();
+          } else {
+            await logQueue(List<Song>.from(state.queue), index);
+          }
           return;
         }
       }
@@ -373,6 +412,33 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
       queue: state.queue,
       nextSong: state.queue[nextIndex],
     );
+  }
+
+  /// 预取落盘后将播放器队列中下一首的在线 AudioSource 热替换为本地文件，
+  /// 确保当前播放队列立即用到预取文件而非再次走网络流。
+  Future<void> _onPrefetchReady(Song song, File file) async {
+    if (!_mounted || _suppressIndexSync) return;
+    final idx = state.queue.indexWhere((s) => s.id == song.id);
+    if (idx < 0 || idx == state.currentIndex) return;
+    if (_audioPlayer.sequence.length != state.queue.length) return;
+    final existingSource = _audioPlayer.sequence[idx];
+    if (existingSource is UriAudioSource &&
+        existingSource.uri.isScheme('file')) {
+      return;
+    }
+    final token = _queueBuildToken;
+    _suppressIndexSync = true;
+    try {
+      await _audioPlayer.insertAudioSource(idx, AudioSource.file(file.path));
+      if (!_mounted || token != _queueBuildToken) return;
+      await _audioPlayer.removeAudioSourceAt(idx + 1);
+    } catch (e) {
+      AppLog.d('Swap prefetched source failed for ${song.id}: $e');
+    } finally {
+      if (token == _queueBuildToken) {
+        _suppressIndexSync = false;
+      }
+    }
   }
 
   int? _resolveNextIndexForPrefetch() {
@@ -487,6 +553,8 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
       queue: displayQueue,
       currentIndex: safeDisplayIndex,
       currentSong: displayQueue[safeDisplayIndex],
+      position: Duration.zero,
+      duration: Duration.zero,
     );
     _persistQueueCache();
     _persistPlaybackState();
@@ -724,16 +792,39 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
       final resumePosition = _audioPlayer.playing
           ? _audioPlayer.position
           : _pendingRestorePosition;
+      final isColdRestore =
+          _pendingRestorePosition > Duration.zero ||
+          _audioPlayer.sequence.isEmpty;
       _pendingRestorePosition = Duration.zero;
       final shouldResume = _audioPlayer.playing;
 
       try {
-        await _audioPlayer.setAudioSources(
-          sources,
-          initialIndex: currentIndex,
-          initialPosition: resumePosition,
-          preload: true,
-        );
+        if (!isColdRestore && _audioPlayer.sequence.length == 1) {
+          // 当前已在播放首曲：用前后增量插入代替全量 setAudioSources，
+          // 避免重置底层解码管线引发播放中断/重缓冲卡顿。
+          if (currentIndex > 0) {
+            await _audioPlayer.insertAudioSources(
+              0,
+              sources.sublist(0, currentIndex),
+            );
+          }
+          if (!_mounted || buildToken != _queueBuildToken) return;
+          if (currentIndex + 1 < sources.length) {
+            await _audioPlayer.addAudioSources(
+              sources.sublist(currentIndex + 1),
+            );
+          }
+        } else {
+          await _audioPlayer.setAudioSources(
+            sources,
+            initialIndex: currentIndex,
+            initialPosition: resumePosition,
+            preload: true,
+          );
+        }
+        if (state.mode == PlaybackMode.shuffle) {
+          await _audioPlayer.setShuffleModeEnabled(true);
+        }
       } catch (e) {
         AppLog.d('setAudioSources(expand) failed: $e');
         // 后台展开失败不打断当前播放：只复位标记，不触碰 state/position。
@@ -752,7 +843,7 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
       _syncBackgroundNowPlaying(playableSongs[currentIndex]);
       _suppressIndexSync = false;
 
-      if (shouldResume) {
+      if (shouldResume && !_audioPlayer.playing) {
         try {
           _audioPlayer.play();
         } catch (e) {
@@ -787,25 +878,23 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
     if (baseSong == null) return;
     if ((baseSong.lyrics?.isNotEmpty ?? false)) return;
 
-    final cached = _songDetailsCache.get(songId);
+    // 统一复用 FysgService 内的 LRU 缓存与 inFlight 请求去重
+    final cached = _service.getCachedSongDetails(songId);
     if (cached != null) {
       _mergeSongDetailsIntoState(cached);
       return;
     }
 
-    if (_songDetailsLoading.contains(songId)) return;
-    _songDetailsLoading.add(songId);
     final result = await _service.getSongDetails(songId);
+    if (!_mounted) return;
     result.when(
       ok: (details) {
-        _songDetailsCache.put(songId, details);
         _mergeSongDetailsIntoState(details);
       },
       err: (error) {
         AppLog.d('Failed to load song details for $songId: ${error.message}');
       },
     );
-    _songDetailsLoading.remove(songId);
   }
 
   void _mergeSongDetailsIntoState(Song detailedSong) {
@@ -844,7 +933,7 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
   void _syncBackgroundNowPlaying(Song? song) {
     final handler = AppAudioService.handler;
     if (handler == null) return;
-    handler.setNowPlaying(song);
+    handler.setNowPlaying(song, duration: state.duration);
     // 切歌必须立即同步锁屏，否则封面/标题延迟 1s
     _syncBackgroundPlayback(force: true);
   }
@@ -957,21 +1046,8 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
     final nextIndex = (state.mode.index + 1) % modes.length;
     final newMode = modes[nextIndex];
     state = state.copyWith(mode: newMode);
-
-    switch (newMode) {
-      case PlaybackMode.sequence:
-        _audioPlayer.setLoopMode(LoopMode.all);
-        _audioPlayer.setShuffleModeEnabled(false);
-        break;
-      case PlaybackMode.shuffle:
-        _audioPlayer.setLoopMode(LoopMode.all);
-        _audioPlayer.setShuffleModeEnabled(true);
-        break;
-      case PlaybackMode.single:
-        _audioPlayer.setLoopMode(LoopMode.one);
-        _audioPlayer.setShuffleModeEnabled(false);
-        break;
-    }
+    unawaited(_applyPlaybackMode(newMode));
+    unawaited(_persistence.persistPlaybackMode(newMode.name));
   }
 
   void next({bool auto = false}) {
@@ -985,6 +1061,12 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
       if (auto) _audioPlayer.play();
       return;
     }
+    // 后台展开尚未完成时，_audioPlayer 里只有首曲，直接按队列索引切过去
+    if (_audioPlayer.sequence.length < state.queue.length) {
+      final nextIndex = (state.currentIndex + 1) % state.queue.length;
+      unawaited(logQueue(List<Song>.from(state.queue), nextIndex));
+      return;
+    }
     if (auto && state.mode == PlaybackMode.single && state.queue.length > 1) {
       final nextIndex = (state.currentIndex + 1) % state.queue.length;
       _audioPlayer.seek(Duration.zero, index: nextIndex);
@@ -995,6 +1077,13 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
   }
 
   void previous() {
+    if (state.queue.length > 1 &&
+        _audioPlayer.sequence.length < state.queue.length) {
+      final prevIndex =
+          (state.currentIndex - 1 + state.queue.length) % state.queue.length;
+      unawaited(logQueue(List<Song>.from(state.queue), prevIndex));
+      return;
+    }
     _audioPlayer.seekToPrevious();
   }
 }

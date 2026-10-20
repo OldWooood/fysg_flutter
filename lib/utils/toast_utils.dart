@@ -24,6 +24,9 @@ class ToastUtils {
 
   static String localizedAppError(BuildContext context, AppError error) {
     final l10n = AppLocalizations.of(context);
+    if (error is NotFoundError) {
+      return l10n.errorNotFound(error.resource);
+    }
     return switch (error.code) {
       'timeout' => l10n.errorTimeout,
       'rateLimited' => l10n.errorRateLimited,

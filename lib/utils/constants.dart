@@ -58,6 +58,7 @@ class AppConstants {
   static const String spQueueIndexKey = 'player_queue_index';
   static const String spQueueSongIdKey = 'player_queue_song_id';
   static const String spQueuePositionKey = 'player_queue_position_ms';
+  static const String spPlaybackModeKey = 'player_playback_mode';
   static const String spSearchHistory = 'search_history';
   static const String spRecentSongs = 'recent_songs';
   static const String spFavoritePlaylists = 'favorite_playlists';

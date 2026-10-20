@@ -75,4 +75,48 @@ class AssetConfig {
       AppLog.d('AssetConfig saveToPrefs failed: $e');
     }
   }
+
+  static bool _isMigratableAssetUri(Uri uri) {
+    final host = uri.host.toLowerCase();
+    final path = uri.path;
+    return host.contains('nanqiao.xyz') ||
+        host.contains('gooddaycoco.com') ||
+        host.startsWith('sg-file.') ||
+        path.startsWith('/song_high/') ||
+        path.startsWith('/gepu/');
+  }
+
+  /// 将历史持久化缓存（manifest/队列快照）中的封面地址对齐到当前 [imageBase]。
+  static String? rewriteImageUrl(String? rawUrl) {
+    if (rawUrl == null || rawUrl.isEmpty) return rawUrl;
+    if (!rawUrl.startsWith('http')) {
+      final sep = rawUrl.startsWith('/') ? '' : '/';
+      return '$imageBase$sep$rawUrl';
+    }
+    final uri = Uri.tryParse(rawUrl);
+    if (uri == null || !_isMigratableAssetUri(uri)) return rawUrl;
+    final query = uri.hasQuery ? '?${uri.query}' : '';
+    return '$imageBase${uri.path}$query';
+  }
+
+  /// 将历史持久化缓存中的音频地址对齐到当前 [audioBase] / [imageBase]。
+  static String? rewriteAudioUrl(String? rawUrl) {
+    if (rawUrl == null || rawUrl.isEmpty) return rawUrl;
+    if (!rawUrl.startsWith('http')) {
+      final normalized = rawUrl.startsWith('/') ? rawUrl : '/$rawUrl';
+      if (normalized.startsWith('/song_high/')) {
+        final subPath = normalized.substring('/song_high'.length);
+        return '$audioBase$subPath';
+      }
+      return '$audioBase$normalized';
+    }
+    final uri = Uri.tryParse(rawUrl);
+    if (uri == null || !_isMigratableAssetUri(uri)) return rawUrl;
+    final query = uri.hasQuery ? '?${uri.query}' : '';
+    if (uri.path.startsWith('/song_high/')) {
+      final subPath = uri.path.substring('/song_high'.length);
+      return '$audioBase$subPath$query';
+    }
+    return '$audioBase${uri.path}$query';
+  }
 }
