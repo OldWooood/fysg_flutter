@@ -152,7 +152,13 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
     // build 重跑时实例保留：只初始化一次，避免重复订阅/恢复队列
     if (!_initialized) {
       _initialized = true;
-      _init();
+      // 异步初始化必须捕获错误：否则任何一次早期异常都会变成
+      // unhandled async error，并让后续订阅/队列恢复全部中断。
+      unawaited(
+        _init().catchError((Object e, StackTrace st) {
+          AppLog.d('Player init failed: $e\n$st');
+        }),
+      );
       // Notifier 没有可 override 的 dispose（同步），cancel 的 Future 无法 await，
       // 用 unawaited 显式标记“故意不等待”；同时解绑音频通知 delegate，
       // 防止静态单例持有已释放对象。
@@ -203,9 +209,6 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
 
   Future<void> _init() async {
     final restoredMode = _parsePlaybackMode(_persistence.loadPlaybackMode());
-    if (_mounted && restoredMode != state.mode) {
-      state = state.copyWith(mode: restoredMode);
-    }
 
     // Set the playlist as audio source to enable media controls
     try {
@@ -213,6 +216,14 @@ class PlayerNotifier extends Notifier<FysgPlayerState>
       await _applyPlaybackMode(restoredMode);
     } catch (e) {
       AppLog.d('Error initializing audio player: $e');
+    }
+
+    // 注意：不能在 build() 同步阶段读取 state（Riverpod 会抛
+    // “Tried to read the state of an uninitialized provider”），
+    // 否则 _init 在第一个 await 前就中断，playerStateStream 等订阅
+    // 永远不会注册，表现为播放按钮/进度一直不更新。等首次 await 后再读。
+    if (_mounted && restoredMode != state.mode) {
+      state = state.copyWith(mode: restoredMode);
     }
 
     // 接入通知栏/锁屏/耳机的播放控制指令
